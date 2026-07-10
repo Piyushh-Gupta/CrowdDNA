@@ -330,7 +330,17 @@ class ScenarioFactory:
         Returns:
             ScenarioConfig for the Safe crowd scenario.
         """
-        pass  # TODO: return ScenarioConfig(...)
+        return ScenarioConfig(
+            scenario_name="safe_open_field",
+            risk_class="Safe",
+            num_agents=20,
+            scene_width=20.0,
+            scene_height=20.0,
+            initial_speed=0.8,
+            goal_spread=5.0,
+            enable_panic=False,
+            description="Open-field uniform walking with dispersed goals and low density."
+        )
 
     @staticmethod
     def build_congesting() -> ScenarioConfig:
@@ -342,7 +352,17 @@ class ScenarioFactory:
         Returns:
             ScenarioConfig for the Congesting crowd scenario.
         """
-        pass  # TODO: return ScenarioConfig(...)
+        return ScenarioConfig(
+            scenario_name="congesting_bottleneck",
+            risk_class="Congesting",
+            num_agents=35,
+            scene_width=20.0,
+            scene_height=20.0,
+            initial_speed=1.2,
+            goal_spread=2.0,
+            enable_panic=False,
+            description="Agents funneling through a narrow bottleneck, causing compression."
+        )
 
     @staticmethod
     def build_critical() -> ScenarioConfig:
@@ -356,7 +376,17 @@ class ScenarioFactory:
         Returns:
             ScenarioConfig for the Critical crowd scenario.
         """
-        pass  # TODO: return ScenarioConfig(...)
+        return ScenarioConfig(
+            scenario_name="critical_panic_escape",
+            risk_class="Critical",
+            num_agents=50,
+            scene_width=20.0,
+            scene_height=20.0,
+            initial_speed=2.0,
+            goal_spread=10.0,
+            enable_panic=True,
+            description="Panic escape from a central point with high speed and divergence."
+        )
 
     @staticmethod
     def build_all() -> list[ScenarioConfig]:
@@ -367,7 +397,11 @@ class ScenarioFactory:
         Returns:
             List of ScenarioConfig, one per risk class.
         """
-        pass  # TODO: return [build_safe(), build_congesting(), build_critical()]
+        return [
+            ScenarioFactory.build_safe(),
+            ScenarioFactory.build_congesting(),
+            ScenarioFactory.build_critical(),
+        ]
 
 
 # ---------------------------------------------------------------------------
