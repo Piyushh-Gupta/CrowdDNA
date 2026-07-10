@@ -1,0 +1,39 @@
+# CrowdFlow DNA - Global Configuration
+
+pipeline:
+  # Process every Nth frame (trades off latency vs temporal resolution)
+  frame_sample_rate: 3  
+  # Timeout in seconds to abort processing (Hugging Face CPU limits)
+  timeout_seconds: 180  
+
+detection:
+  model_weights: "yolov8n.pt"
+  confidence_threshold: 0.35
+  classes: [0] # 0 = 'person' in COCO dataset
+
+tracking:
+  # ByteTrack parameters
+  track_thresh: 0.4
+  track_buffer: 30
+  match_thresh: 0.8
+
+graph:
+  # Maximum Euclidean distance (in normalized frame coordinates 0-1) to create an edge
+  proximity_radius: 0.15
+
+model:
+  # GNN + GRU architecture hyperparameters
+  gnn_hidden_dim: 64
+  gru_hidden_dim: 64
+  num_gnn_layers: 2
+  classes: ["Safe", "Congesting", "Critical"]
+  onnx_path: "assets/model.onnx"
+
+rendering:
+  # Colorblind-considerate colors for risk levels (BGR format for OpenCV)
+  colors:
+    Safe: [0, 255, 0]          # Green
+    Congesting: [0, 165, 255]  # Orange
+    Critical: [0, 0, 255]      # Red
+  bbox_thickness: 2
+  edge_thickness: 1

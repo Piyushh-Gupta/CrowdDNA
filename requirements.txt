@@ -1,0 +1,33 @@
+# CrowdFlow DNA Core Dependencies
+
+# Core Python
+numpy==1.26.4
+pandas==2.2.1
+
+# Computer Vision & OpenCV
+opencv-python-headless==4.9.0.80
+
+# Object Detection & Tracking
+ultralytics==8.1.29  # YOLOv8
+
+# PyTorch & Graph Neural Networks
+torch==2.2.1
+torchvision==0.17.1
+torch-geometric==2.5.0
+networkx==3.2.1
+
+# Inference / ONNX
+onnx==1.15.0
+onnxruntime==1.17.1
+
+# Web App & Visualization
+gradio==4.21.0
+matplotlib==3.8.3
+plotly==5.19.0
+
+# Simulation (Dev A)
+pysocialforce==1.1.2
+
+# Testing & Linting
+pytest==8.0.2
+ruff==0.3.2
