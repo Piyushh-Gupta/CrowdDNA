@@ -1,0 +1,37 @@
+name: CI Smoke Test
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install CI Tools
+      run: |
+        python -m pip install --upgrade pip
+        # During Phase 0, we only install testing tools. 
+        # Full ML dependencies (PyTorch, YOLO) will be enabled in later phases 
+        # when actual model code is committed, to keep the CI fast.
+        pip install ruff pytest
+
+    - name: Lint with Ruff
+      run: |
+        # Check all python files in the repository
+        ruff check crowdflow_dna/ tests/ training/
+
+    - name: Run Pytest
+      run: |
+        # Run pytest. A placeholder test ensures this doesn't fail with exit code 5 (no tests found)
+        pytest tests/
