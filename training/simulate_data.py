@@ -634,6 +634,9 @@ class AutoLabeler:
 
     The labeling rules are priority-ordered: Critical is evaluated before
     Congesting before Safe, ensuring danger classes are never suppressed.
+
+    All methods are deterministic: given identical inputs they always
+    produce identical outputs. No random state is used.
     """
 
     def label_sequence(
@@ -644,16 +647,26 @@ class AutoLabeler:
     ) -> list[str]:
         """Labels all timesteps in a trajectory sequence.
 
+        Iterates over each timestep, computes crowd metrics via
+        ``_compute_metrics``, and assigns a risk label via ``_apply_rules``.
+
         Args:
             positions: Agent positions of shape ``(T, N, 2)``.
             velocities: Agent velocities of shape ``(T, N, 2)``.
-            config: Scenario config; used to consult ``enable_panic`` flag.
+            config: Scenario config; ``enable_panic`` flag is forwarded
+                to ``_apply_rules`` to lower the Critical threshold.
 
         Returns:
             List of risk label strings of length ``T``, each element being
             one of ``"Safe"``, ``"Congesting"``, or ``"Critical"``.
         """
-        pass  # TODO: iterate over timesteps and call _compute_metrics + _apply_rules
+        T = positions.shape[0]
+        labels: list[str] = []
+        for t in range(T):
+            metrics = self._compute_metrics(positions[t], velocities[t])
+            label = self._apply_rules(metrics, config.enable_panic)
+            labels.append(label)
+        return labels
 
     def _compute_metrics(
         self,
@@ -662,21 +675,71 @@ class AutoLabeler:
     ) -> dict[str, float]:
         """Computes crowd-level kinematic metrics for a single timestep.
 
+        **mean_local_density**: For every agent, counts how many other agents
+        lie within ``PROXIMITY_RADIUS_M`` metres. The per-agent count is
+        averaged across all agents and normalized by the maximum possible
+        count ``(N - 1)`` so the result lies in ``[0, 1]``. Returns ``0.0``
+        when there is only one agent.
+
+        **mean_speed**: Mean L2 norm of velocity vectors across all ``N``
+        agents in metres per second.
+
+        **velocity_divergence**: Mean cosine *dissimilarity*
+        ``(1 - cosine_similarity)`` computed over all unique agent pairs.
+        A value of ``0`` means all agents move in exactly the same direction;
+        a value of ``1`` means agents are moving in perfectly opposite
+        directions on average. Returns ``0.0`` when fewer than two agents
+        have non-zero velocity.
+
         Args:
             pos_t: Agent positions at timestep t; shape ``(N, 2)``.
             vel_t: Agent velocities at timestep t; shape ``(N, 2)``.
 
         Returns:
-            Dictionary with keys:
-                - ``"mean_local_density"`` (float): Normalized average
-                  number of neighbours within ``PROXIMITY_RADIUS_M``.
-                - ``"mean_speed"`` (float): Mean L2 velocity norm across
-                  all agents (m/s).
-                - ``"velocity_divergence"`` (float): Mean of
-                  ``(1 - cosine_similarity)`` across all agent pairs;
-                  0 = perfectly aligned, 1 = fully chaotic.
+            Dictionary with float values for keys ``"mean_local_density"``,
+            ``"mean_speed"``, and ``"velocity_divergence"``.
         """
-        pass  # TODO: implement metric computation
+        N = pos_t.shape[0]
+
+        # -- mean_local_density --
+        if N <= 1:
+            mean_local_density = 0.0
+        else:
+            # Pairwise squared distances via broadcasting: (N, 1, 2) - (1, N, 2)
+            diff = pos_t[:, np.newaxis, :] - pos_t[np.newaxis, :, :]  # (N, N, 2)
+            sq_dist = (diff ** 2).sum(axis=2)                          # (N, N)
+            # Neighbour count per agent (exclude self by checking > 0 dist)
+            within_radius = (sq_dist < PROXIMITY_RADIUS_M ** 2) & (sq_dist > 0.0)
+            neighbour_counts = within_radius.sum(axis=1).astype(float)  # (N,)
+            mean_local_density = float(neighbour_counts.mean() / (N - 1))
+
+        # -- mean_speed --
+        speeds = np.linalg.norm(vel_t, axis=1)   # (N,)
+        mean_speed = float(speeds.mean())
+
+        # -- velocity_divergence --
+        vel_norms = speeds                         # reuse (N,)
+        moving = vel_norms > 1e-8                  # mask of agents with non-zero velocity
+        n_moving = int(moving.sum())
+
+        if n_moving < 2:
+            velocity_divergence = 0.0
+        else:
+            v_moving = vel_t[moving]               # (M, 2)
+            norms_moving = vel_norms[moving]       # (M,)
+            unit_v = v_moving / norms_moving[:, np.newaxis]  # (M, 2)
+            # Cosine similarity matrix: (M, M) via dot product of unit vectors
+            cos_sim = unit_v @ unit_v.T            # (M, M), values in [-1, 1]
+            # Dissimilarity for all unique pairs (upper triangle, excluding diag)
+            i_upper, j_upper = np.triu_indices(n_moving, k=1)
+            pair_dissimilarity = 1.0 - cos_sim[i_upper, j_upper]
+            velocity_divergence = float(pair_dissimilarity.mean())
+
+        return {
+            "mean_local_density": mean_local_density,
+            "mean_speed": mean_speed,
+            "velocity_divergence": velocity_divergence,
+        }
 
     def _apply_rules(
         self,
@@ -685,7 +748,22 @@ class AutoLabeler:
     ) -> str:
         """Applies priority-ordered labeling rules to a metrics snapshot.
 
-        Priority order (highest to lowest): Critical → Congesting → Safe.
+        Rules are evaluated highest-priority first so that Critical is never
+        overridden by a Congesting or Safe condition.
+
+        Priority 1 — **Critical (panic path)**: triggered when ``enable_panic``
+        is ``True`` *and* either the divergence or speed exceeds its Critical
+        threshold. Reflects PySocialForce's active panic/escape forces.
+
+        Priority 2 — **Critical (density path)**: triggered when both density
+        and divergence are above their Critical thresholds. Captures genuine
+        high-density chaotic situations regardless of the panic flag.
+
+        Priority 3 — **Congesting**: triggered when density *or* divergence
+        exceeds its Congesting threshold, indicating compression or flow
+        disruption without full panic.
+
+        Priority 4 — **Safe**: default when none of the above conditions hold.
 
         Args:
             metrics: Output of ``_compute_metrics`` for one timestep.
@@ -695,20 +773,55 @@ class AutoLabeler:
         Returns:
             One of ``"Safe"``, ``"Congesting"``, or ``"Critical"``.
         """
-        pass  # TODO: implement threshold rule logic
+        density = metrics["mean_local_density"]
+        speed = metrics["mean_speed"]
+        divergence = metrics["velocity_divergence"]
+
+        # Priority 1: panic-mode Critical
+        if enable_panic and (
+            divergence > DIVERGENCE_CRITICAL_THRESH
+            or speed > SPEED_CRITICAL_THRESH
+        ):
+            return "Critical"
+
+        # Priority 2: density-driven Critical
+        if (
+            density > DENSITY_CRITICAL_THRESH
+            and divergence > DIVERGENCE_CONGESTING_THRESH
+        ):
+            return "Critical"
+
+        # Priority 3: Congesting
+        if (
+            density > DENSITY_CONGESTING_THRESH
+            or divergence > DIVERGENCE_CONGESTING_THRESH
+        ):
+            return "Congesting"
+
+        # Priority 4: Safe (default)
+        return "Safe"
 
     @staticmethod
     def compute_label_distribution(labels: list[str]) -> dict[str, int]:
         """Counts occurrences of each risk label in a labeled sequence.
 
+        All three canonical risk classes are always present as keys even if
+        their count is zero, so downstream consumers can rely on a fixed
+        dictionary structure without guarding against missing keys.
+
         Args:
-            labels: List of risk label strings of length T.
+            labels: List of risk label strings of length T. Every element
+                must be one of the values in ``RISK_CLASSES``.
 
         Returns:
             Dictionary mapping each risk class to its timestep count,
             e.g. ``{"Safe": 280, "Congesting": 15, "Critical": 5}``.
+            Keys are always exactly the three values in ``RISK_CLASSES``.
         """
-        pass  # TODO: implement distribution counting
+        distribution: dict[str, int] = {cls: 0 for cls in RISK_CLASSES}
+        for label in labels:
+            distribution[label] += 1
+        return distribution
 
 
 # ---------------------------------------------------------------------------
