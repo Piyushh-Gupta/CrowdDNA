@@ -461,9 +461,11 @@ class SimulationRunner:
         """
         import pysocialforce as psf  # deferred import — not available at CI lint time
 
-        np.random.seed(seed)
+        # Use a local Generator so this call never modifies NumPy's global
+        # RNG state, making parallel or sequenced runs fully independent.
+        rng = np.random.default_rng(seed)
 
-        initial_state = self._build_initial_state(config)
+        initial_state = self._build_initial_state(config, rng)
         obstacles = self._build_obstacles(config)
 
         try:
@@ -501,6 +503,7 @@ class SimulationRunner:
     def _build_initial_state(
         self,
         config: ScenarioConfig,
+        rng: np.random.Generator,
     ) -> np.ndarray:
         """Samples random initial positions and goal positions for all agents.
 
@@ -522,6 +525,9 @@ class SimulationRunner:
 
         Args:
             config: Active scenario configuration.
+            rng: Local NumPy Generator instance created in ``run()``.
+                Using a local generator avoids modifying NumPy's global
+                RNG state.
 
         Returns:
             NumPy array of shape ``(N, 6)`` with columns
@@ -534,28 +540,28 @@ class SimulationRunner:
 
         if config.risk_class == "Safe":
             # Agents distributed uniformly; goals scattered on the opposite half
-            px = np.random.uniform(0.5, W * 0.45, size=N)
-            py = np.random.uniform(0.5, H - 0.5, size=N)
-            gx = np.random.uniform(W * 0.55, W - 0.5, size=N)
-            gy = np.random.uniform(0.5, H - 0.5, size=N)
+            px = rng.uniform(0.5, W * 0.45, size=N)
+            py = rng.uniform(0.5, H - 0.5, size=N)
+            gx = rng.uniform(W * 0.55, W - 0.5, size=N)
+            gy = rng.uniform(0.5, H - 0.5, size=N)
 
         elif config.risk_class == "Congesting":
             # Agents on the left; goals clustered at the right side exit point
-            px = np.random.uniform(0.5, W * 0.4, size=N)
-            py = np.random.uniform(0.5, H - 0.5, size=N)
+            px = rng.uniform(0.5, W * 0.4, size=N)
+            py = rng.uniform(0.5, H - 0.5, size=N)
             goal_centre_x = W - 1.0
             goal_centre_y = H / 2.0
-            gx = np.random.normal(goal_centre_x, spread * 0.5, size=N)
-            gy = np.random.normal(goal_centre_y, spread * 0.5, size=N)
+            gx = rng.normal(goal_centre_x, spread * 0.5, size=N)
+            gy = rng.normal(goal_centre_y, spread * 0.5, size=N)
 
         else:  # Critical — panic escape from centre
             centre_x, centre_y = W / 2.0, H / 2.0
             # Agents clustered around the centre
-            px = np.random.normal(centre_x, 1.5, size=N)
-            py = np.random.normal(centre_y, 1.5, size=N)
+            px = rng.normal(centre_x, 1.5, size=N)
+            py = rng.normal(centre_y, 1.5, size=N)
             # Goals near the scene boundary in all directions
-            angles = np.random.uniform(0, 2 * np.pi, size=N)
-            radius = np.random.uniform(W * 0.4, W * 0.5, size=N)
+            angles = rng.uniform(0, 2 * np.pi, size=N)
+            radius = rng.uniform(W * 0.4, W * 0.5, size=N)
             gx = centre_x + radius * np.cos(angles)
             gy = centre_y + radius * np.sin(angles)
 
