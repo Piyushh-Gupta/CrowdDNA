@@ -414,7 +414,23 @@ class SimulationRunner:
 
     Each call to ``run()`` is fully deterministic given the same seed,
     enabling exact reproducibility of any generated sequence (SRD §4.7.4).
+
+    PySocialForce state format (per agent, 6 columns):
+        ``[px, py, vx, vy, gx, gy]``
+    where ``(px, py)`` is position, ``(vx, vy)`` is velocity, and
+    ``(gx, gy)`` is the goal position.
+
+    After stepping the simulator ``num_timesteps`` times, positions and
+    velocities are read from the accumulated ``peds.get_states()`` buffer and
+    returned as two ``float32`` NumPy arrays of shape
+    ``(num_timesteps, N, 2)``.
     """
+
+    # Congesting scenario: narrow passage occupies the horizontal centre of
+    # the scene. Agents start on one side and must squeeze through.
+    # Obstacle format for PySocialForce: [x_start, x_end, y_start, y_end]
+    _BOTTLENECK_GAP_WIDTH: float = 2.0   # metres, width of the passage opening
+    _BOTTLENECK_WALL_X: float = 10.0     # x-position of the wall (scene centre)
 
     def run(
         self,
@@ -443,38 +459,164 @@ class SimulationRunner:
         Raises:
             RuntimeError: If PySocialForce fails to initialize or step.
         """
-        pass  # TODO: implement PySocialForce simulation loop
+        import pysocialforce as psf  # deferred import — not available at CI lint time
+
+        # Use a local Generator so this call never modifies NumPy's global
+        # RNG state, making parallel or sequenced runs fully independent.
+        rng = np.random.default_rng(seed)
+
+        initial_state = self._build_initial_state(config, rng)
+        obstacles = self._build_obstacles(config)
+
+        try:
+            sim = psf.Simulator(
+                state=initial_state,
+                groups=None,
+                obstacles=obstacles,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"PySocialForce failed to initialize for scenario "
+                f"'{config.scenario_name}' (seed={seed}): {exc}"
+            ) from exc
+
+        try:
+            for _ in range(num_timesteps):
+                sim.step()
+        except Exception as exc:
+            raise RuntimeError(
+                f"PySocialForce step failed for scenario "
+                f"'{config.scenario_name}' (seed={seed}): {exc}"
+            ) from exc
+
+        # get_states() returns shape (T+1, N, 7); the +1 is the initial state
+        # recorded before the first step. We drop timestep 0 (pre-simulation)
+        # and retain exactly num_timesteps rows.
+        all_states, _ = sim.peds.get_states()
+        # Slice to (num_timesteps, N, 7), then extract pos and vel columns
+        states = all_states[1: num_timesteps + 1]  # shape (T, N, 7)
+        positions = states[:, :, 0:2].astype(np.float32)   # (T, N, 2)
+        velocities = states[:, :, 2:4].astype(np.float32)  # (T, N, 2)
+
+        return positions, velocities
 
     def _build_initial_state(
         self,
         config: ScenarioConfig,
+        rng: np.random.Generator,
     ) -> np.ndarray:
         """Samples random initial positions and goal positions for all agents.
 
+        For the Safe scenario agents are uniformly distributed across the
+        scene with goals sampled near the opposite side, producing natural
+        crossing flows.
+
+        For the Congesting scenario agents start on the left half of the
+        scene; goals are clustered tightly on the right side, forcing all
+        agents through the bottleneck obstacle.
+
+        For the Critical scenario agents start clustered at the scene centre
+        and flee outward in all directions (panic escape). Goal positions are
+        sampled near the scene boundary.
+
+        Initial velocity is set to ``initial_speed`` along the direction from
+        each agent's start position to its goal, so agents begin moving
+        immediately on the first step.
+
         Args:
             config: Active scenario configuration.
+            rng: Local NumPy Generator instance created in ``run()``.
+                Using a local generator avoids modifying NumPy's global
+                RNG state.
 
         Returns:
-            NumPy array of shape ``(N, 6)`` where columns are
-            ``[px, py, vx, vy, gx, gy]`` — the PySocialForce initial
-            state format.
+            NumPy array of shape ``(N, 6)`` with columns
+            ``[px, py, vx, vy, gx, gy]``.
         """
-        pass  # TODO: implement initial state sampling
+        N = config.num_agents
+        W, H = config.scene_width, config.scene_height
+        speed = config.initial_speed
+        spread = config.goal_spread
+
+        if config.risk_class == "Safe":
+            # Agents distributed uniformly; goals scattered on the opposite half
+            px = rng.uniform(0.5, W * 0.45, size=N)
+            py = rng.uniform(0.5, H - 0.5, size=N)
+            gx = rng.uniform(W * 0.55, W - 0.5, size=N)
+            gy = rng.uniform(0.5, H - 0.5, size=N)
+
+        elif config.risk_class == "Congesting":
+            # Agents on the left; goals clustered at the right side exit point
+            px = rng.uniform(0.5, W * 0.4, size=N)
+            py = rng.uniform(0.5, H - 0.5, size=N)
+            goal_centre_x = W - 1.0
+            goal_centre_y = H / 2.0
+            gx = rng.normal(goal_centre_x, spread * 0.5, size=N)
+            gy = rng.normal(goal_centre_y, spread * 0.5, size=N)
+
+        else:  # Critical — panic escape from centre
+            centre_x, centre_y = W / 2.0, H / 2.0
+            # Agents clustered around the centre
+            px = rng.normal(centre_x, 1.5, size=N)
+            py = rng.normal(centre_y, 1.5, size=N)
+            # Goals near the scene boundary in all directions
+            angles = rng.uniform(0, 2 * np.pi, size=N)
+            radius = rng.uniform(W * 0.4, W * 0.5, size=N)
+            gx = centre_x + radius * np.cos(angles)
+            gy = centre_y + radius * np.sin(angles)
+
+        # Clip positions and goals to valid scene bounds with a small margin
+        margin = 0.3
+        px = np.clip(px, margin, W - margin)
+        py = np.clip(py, margin, H - margin)
+        gx = np.clip(gx, margin, W - margin)
+        gy = np.clip(gy, margin, H - margin)
+
+        # Compute unit direction from start to goal and apply initial speed
+        dx, dy = gx - px, gy - py
+        dist = np.hypot(dx, dy)
+        dist = np.where(dist < 1e-6, 1e-6, dist)   # avoid zero-division
+        vx = speed * dx / dist
+        vy = speed * dy / dist
+
+        state = np.column_stack([px, py, vx, vy, gx, gy])  # (N, 6)
+        return state.astype(np.float64)
 
     def _build_obstacles(
         self,
         config: ScenarioConfig,
-    ) -> list[Any] | None:
+    ) -> list[list[float]] | None:
         """Constructs PySocialForce obstacle definitions from scenario config.
+
+        Only the Congesting scenario uses obstacles (a wall with a narrow
+        central passage). Safe and Critical scenarios return ``None``.
+
+        Obstacle format expected by PySocialForce:
+            ``[x_start, x_end, y_start, y_end]`` — axis-aligned line segments.
 
         Args:
             config: Active scenario configuration.
 
         Returns:
-            List of obstacle objects for PySocialForce, or ``None`` if the
-            scenario has no obstacles.
+            A list of ``[x_start, x_end, y_start, y_end]`` obstacle
+            definitions for the Congesting scenario, or ``None`` for all
+            other scenarios.
         """
-        pass  # TODO: implement obstacle construction
+        if config.risk_class != "Congesting":
+            return None
+
+        H = config.scene_height
+        x = self._BOTTLENECK_WALL_X
+        gap = self._BOTTLENECK_GAP_WIDTH
+        gap_start = (H / 2.0) - (gap / 2.0)
+        gap_end = (H / 2.0) + (gap / 2.0)
+
+        # Wall below the gap
+        lower_wall = [x, x, 0.0, gap_start]
+        # Wall above the gap
+        upper_wall = [x, x, gap_end, H]
+
+        return [lower_wall, upper_wall]
 
 
 # ---------------------------------------------------------------------------
