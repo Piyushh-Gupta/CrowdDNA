@@ -30,7 +30,9 @@ SRD References:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -835,6 +837,12 @@ class DatasetSerializer:
     The JSON output of this class is the authoritative integration contract
     between simulate_data.py and prepare_datasets.py. The schema is defined
     by the ``TrajectoryRecord.to_dict()`` method.
+
+    Each call to ``save_record`` writes exactly one ``<sequence_id>.json``
+    file. After all records are saved, ``write_manifest`` writes a single
+    ``manifest.json`` that indexes the entire dataset. Both methods are
+    deterministic: identical inputs always produce identical byte-for-byte
+    output.
     """
 
     def save_record(
@@ -842,38 +850,113 @@ class DatasetSerializer:
         record: TrajectoryRecord,
         output_dir: str,
     ) -> str:
-        """Serializes one TrajectoryRecord to a JSON file.
+        """Validates and serializes one TrajectoryRecord to a JSON file.
+
+        The output filename is ``<sequence_id>.json``. The file is written
+        with 2-space indentation and sorted keys so that diffs are
+        human-readable and output is deterministic regardless of insertion
+        order.
 
         Args:
-            record: A validated TrajectoryRecord instance.
+            record: A ``TrajectoryRecord`` instance. ``validate()`` is
+                called before writing; any validation failure raises
+                ``ValueError`` without creating the file.
             output_dir: Directory path where the JSON file will be written.
-                Created if it does not already exist.
+                Created (including intermediate directories) if it does not
+                already exist.
 
         Returns:
-            Absolute path of the written JSON file.
+            Absolute path of the written JSON file as a string.
 
         Raises:
-            IOError: If the file cannot be written.
+            ValueError: If ``record.validate()`` fails.
+            IOError: If the file cannot be written to ``output_dir``.
         """
-        pass  # TODO: implement JSON write logic
+        record.validate()
+
+        out_path = os.path.join(output_dir, f"{record.sequence_id}.json")
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            with open(out_path, "w", encoding="utf-8") as fh:
+                json.dump(record.to_dict(), fh, indent=2, sort_keys=True)
+                fh.write("\n")  # POSIX-compliant trailing newline
+        except OSError as exc:
+            raise IOError(
+                f"Failed to write record '{record.sequence_id}' "
+                f"to '{out_path}': {exc}"
+            ) from exc
+
+        logger.debug("Saved record '%s' → %s", record.sequence_id, out_path)
+        return os.path.abspath(out_path)
 
     def write_manifest(
         self,
         records: list[TrajectoryRecord],
         output_dir: str,
     ) -> None:
-        """Writes the dataset manifest to manifest.json in output_dir.
+        """Writes a manifest.json index for an entire dataset.
 
-        The manifest contains one entry per TrajectoryRecord with fields:
-        ``sequence_id``, ``risk_class``, ``scenario_name``,
-        ``num_timesteps``, ``num_agents``, ``file_path``,
-        ``label_distribution``, ``generation_seed``.
+        The manifest is a JSON array sorted by ``sequence_id`` so that
+        entries are always in a stable, deterministic order. Each entry
+        contains lightweight metadata only — no trajectory arrays — so the
+        file remains small regardless of dataset size.
+
+        Manifest entry schema::
+
+            {
+              "sequence_id":        str,
+              "risk_class":         str,
+              "scenario_name":      str,
+              "num_agents":         int,
+              "num_timesteps":      int,
+              "generation_seed":    int,
+              "label_distribution": {"Safe": int, "Congesting": int, "Critical": int},
+              "file_path":          str   // relative path from output_dir
+            }
 
         Args:
-            records: All TrajectoryRecord instances produced in this run.
-            output_dir: Directory where manifest.json will be written.
+            records: All ``TrajectoryRecord`` instances produced in this
+                generation run. May be empty, in which case an empty array
+                is written.
+            output_dir: Directory where ``manifest.json`` will be written.
+                Created if it does not already exist.
+
+        Raises:
+            IOError: If the manifest file cannot be written.
         """
-        pass  # TODO: implement manifest write logic
+        os.makedirs(output_dir, exist_ok=True)
+        manifest_path = os.path.join(output_dir, "manifest.json")
+
+        entries: list[dict[str, Any]] = sorted(
+            [
+                {
+                    "sequence_id": rec.sequence_id,
+                    "risk_class": rec.risk_class,
+                    "scenario_name": rec.scenario_name,
+                    "num_agents": rec.num_agents,
+                    "num_timesteps": rec.num_timesteps,
+                    "generation_seed": rec.generation_seed,
+                    "label_distribution": dict(rec.label_distribution),
+                    "file_path": f"{rec.sequence_id}.json",
+                }
+                for rec in records
+            ],
+            key=lambda e: e["sequence_id"],
+        )
+
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as fh:
+                json.dump(entries, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+        except OSError as exc:
+            raise IOError(
+                f"Failed to write manifest to '{manifest_path}': {exc}"
+            ) from exc
+
+        logger.info(
+            "Manifest written: %d record(s) → %s", len(records), manifest_path
+        )
 
 
 # ---------------------------------------------------------------------------
