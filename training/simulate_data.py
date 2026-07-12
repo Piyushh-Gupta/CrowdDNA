@@ -33,10 +33,12 @@ import argparse
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import yaml
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -974,6 +976,13 @@ def generate_dataset(config_path: str) -> None:
     instances, saves them with ``DatasetSerializer``, and writes
     ``manifest.json``.
 
+    Seed strategy: each run receives a globally unique seed computed as::
+
+        seed = random_seed_base + (scenario_index * num_runs_per_scenario) + run_index
+
+    This guarantees that every run—across all scenarios—has a distinct seed
+    while remaining fully reproducible from ``random_seed_base`` alone.
+
     Prints a summary table to stdout on completion showing total runs,
     per-class label distribution, and total dataset size on disk.
 
@@ -985,13 +994,77 @@ def generate_dataset(config_path: str) -> None:
 
     Raises:
         FileNotFoundError: If ``config_path`` does not exist.
-        KeyError: If the ``simulation`` section is missing from the YAML.
+        KeyError: If the ``simulation`` section or a required key is missing.
     """
-    pass  # TODO: implement full orchestration logic
+    t_start = time.monotonic()
+
+    sim_cfg = _load_simulation_config(config_path)
+    num_runs: int = sim_cfg["num_runs_per_scenario"]
+    num_timesteps: int = sim_cfg["num_timesteps"]
+    seed_base: int = sim_cfg["random_seed_base"]
+    output_dir: str = sim_cfg["output_dir"]
+
+    logger.info(
+        "Dataset generation started — %d scenarios × %d runs × %d timesteps → %s",
+        3, num_runs, num_timesteps, output_dir,
+    )
+
+    scenarios = ScenarioFactory.build_all()
+    runner = SimulationRunner()
+    labeler = AutoLabeler()
+    serializer = DatasetSerializer()
+    records: list[TrajectoryRecord] = []
+
+    for scenario_idx, config in enumerate(scenarios):
+        logger.info(
+            "Scenario %d/3: %s (%s)",
+            scenario_idx + 1, config.scenario_name, config.risk_class,
+        )
+        for run_idx in range(num_runs):
+            seed = seed_base + scenario_idx * num_runs + run_idx
+            sequence_id = f"{config.scenario_name}_run_{run_idx:03d}"
+
+            positions, velocities = runner.run(config, seed=seed, num_timesteps=num_timesteps)
+
+            frame_labels = labeler.label_sequence(positions, velocities, config)
+            label_distribution = AutoLabeler.compute_label_distribution(frame_labels)
+
+            record = TrajectoryRecord(
+                sequence_id=sequence_id,
+                risk_class=config.risk_class,
+                scenario_name=config.scenario_name,
+                num_agents=config.num_agents,
+                num_timesteps=num_timesteps,
+                generation_seed=seed,
+                label_distribution=label_distribution,
+                positions=positions.tolist(),
+                velocities=velocities.tolist(),
+                frame_labels=frame_labels,
+            )
+
+            serializer.save_record(record, output_dir)
+            records.append(record)
+
+            if (run_idx + 1) % 10 == 0 or run_idx == num_runs - 1:
+                logger.info(
+                    "  %s: %d/%d runs complete", config.scenario_name, run_idx + 1, num_runs
+                )
+
+    serializer.write_manifest(records, output_dir)
+
+    elapsed = time.monotonic() - t_start
+    _print_summary(records, elapsed, output_dir)
 
 
 def _load_simulation_config(config_path: str) -> dict[str, Any]:
     """Loads and returns the ``simulation`` section from a YAML config file.
+
+    Validates that all required keys are present so that callers receive
+    a ``KeyError`` with a clear message rather than a silent ``None`` when
+    a key is missing.
+
+    Required keys: ``num_runs_per_scenario``, ``num_timesteps``,
+    ``random_seed_base``, ``output_dir``.
 
     Args:
         config_path: Path to the YAML configuration file.
@@ -1001,9 +1074,33 @@ def _load_simulation_config(config_path: str) -> dict[str, Any]:
 
     Raises:
         FileNotFoundError: If the config file does not exist.
-        KeyError: If the YAML file has no ``simulation`` section.
+        KeyError: If the YAML file has no ``simulation`` section, or if
+            a required key is absent from that section.
     """
-    pass  # TODO: implement YAML loading
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"Configuration file not found: '{config_path}'"
+        )
+
+    with open(config_path, encoding="utf-8") as fh:
+        full_config: dict[str, Any] = yaml.safe_load(fh)
+
+    if "simulation" not in full_config:
+        raise KeyError(
+            f"YAML file '{config_path}' has no 'simulation' section. "
+            "Add a 'simulation:' block with keys: num_runs_per_scenario, "
+            "num_timesteps, random_seed_base, output_dir."
+        )
+
+    sim: dict[str, Any] = full_config["simulation"]
+    required_keys = ("num_runs_per_scenario", "num_timesteps", "random_seed_base", "output_dir")
+    missing = [k for k in required_keys if k not in sim]
+    if missing:
+        raise KeyError(
+            f"simulation section in '{config_path}' is missing required key(s): {missing}"
+        )
+
+    return sim
 
 
 def _print_summary(
@@ -1013,12 +1110,43 @@ def _print_summary(
 ) -> None:
     """Prints a formatted dataset generation summary to stdout.
 
+    Displays total run count, per-scenario breakdown, aggregate label
+    distribution across all timesteps, and elapsed wall-clock time.
+
     Args:
         records: All TrajectoryRecord instances produced in this run.
         elapsed_seconds: Total wall-clock time for generation in seconds.
         output_dir: Directory where files were written.
     """
-    pass  # TODO: implement summary printing
+    total_timesteps = sum(r.num_timesteps for r in records)
+    aggregate: dict[str, int] = {cls: 0 for cls in RISK_CLASSES}
+    for rec in records:
+        for cls, count in rec.label_distribution.items():
+            aggregate[cls] += count
+
+    # Group by scenario for the per-scenario row
+    scenario_counts: dict[str, int] = {}
+    for rec in records:
+        scenario_counts[rec.scenario_name] = scenario_counts.get(rec.scenario_name, 0) + 1
+
+    sep = "─" * 52
+    print(f"\n{'CrowdFlow DNA — Dataset Generation Complete':^52}")
+    print(sep)
+    print(f"  Output directory : {output_dir}")
+    print(f"  Total sequences  : {len(records)}")
+    print(f"  Total timesteps  : {total_timesteps:,}")
+    print(f"  Elapsed time     : {elapsed_seconds:.1f}s")
+    print(sep)
+    print("  Per-scenario sequences:")
+    for name, count in sorted(scenario_counts.items()):
+        print(f"    {name:<30} {count:>4} runs")
+    print(sep)
+    print("  Aggregate label distribution (timesteps):")
+    for cls in RISK_CLASSES:
+        pct = aggregate[cls] / total_timesteps * 100 if total_timesteps else 0.0
+        print(f"    {cls:<12} {aggregate[cls]:>8,}  ({pct:5.1f}%)")
+    print(sep)
+
 
 
 # ---------------------------------------------------------------------------
