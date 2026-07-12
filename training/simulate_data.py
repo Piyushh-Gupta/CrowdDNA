@@ -30,11 +30,15 @@ SRD References:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import yaml
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -148,7 +152,10 @@ class TrajectoryRecord:
 
     Attributes:
         sequence_id: Unique run identifier (e.g. ``"safe_open_field_run_042"``).
-        risk_class: Scenario-level intended class.
+        risk_class: Scenario-level intended class. This identifies the
+            scenario used to generate the sequence. It is scenario metadata
+            only and is not guaranteed to match the majority of
+            ``frame_labels``.
         scenario_name: Source scenario (matches ``ScenarioConfig.scenario_name``).
         num_agents: Number of agents tracked in this run.
         num_timesteps: Number of timesteps actually recorded.
@@ -158,7 +165,8 @@ class TrajectoryRecord:
             stored as nested Python lists for JSON compatibility.
         velocities: Agent velocities per timestep; shape ``(T, N, 2)``,
             stored as nested Python lists for JSON compatibility.
-        frame_labels: Per-timestep risk label; length ``T``.
+        frame_labels: Per-timestep risk label; length ``T``. These are the
+            authoritative per-timestep labels used by downstream components.
     """
 
     sequence_id: str
@@ -330,7 +338,17 @@ class ScenarioFactory:
         Returns:
             ScenarioConfig for the Safe crowd scenario.
         """
-        pass  # TODO: return ScenarioConfig(...)
+        return ScenarioConfig(
+            scenario_name="safe_open_field",
+            risk_class="Safe",
+            num_agents=20,
+            scene_width=20.0,
+            scene_height=20.0,
+            initial_speed=0.8,
+            goal_spread=5.0,
+            enable_panic=False,
+            description="Open-field uniform walking with dispersed goals and low density."
+        )
 
     @staticmethod
     def build_congesting() -> ScenarioConfig:
@@ -342,7 +360,17 @@ class ScenarioFactory:
         Returns:
             ScenarioConfig for the Congesting crowd scenario.
         """
-        pass  # TODO: return ScenarioConfig(...)
+        return ScenarioConfig(
+            scenario_name="congesting_bottleneck",
+            risk_class="Congesting",
+            num_agents=35,
+            scene_width=20.0,
+            scene_height=20.0,
+            initial_speed=1.2,
+            goal_spread=2.0,
+            enable_panic=False,
+            description="Agents funneling through a narrow bottleneck, causing compression."
+        )
 
     @staticmethod
     def build_critical() -> ScenarioConfig:
@@ -356,7 +384,17 @@ class ScenarioFactory:
         Returns:
             ScenarioConfig for the Critical crowd scenario.
         """
-        pass  # TODO: return ScenarioConfig(...)
+        return ScenarioConfig(
+            scenario_name="critical_panic_escape",
+            risk_class="Critical",
+            num_agents=50,
+            scene_width=20.0,
+            scene_height=20.0,
+            initial_speed=2.0,
+            goal_spread=10.0,
+            enable_panic=True,
+            description="Panic escape from a central point with high speed and divergence."
+        )
 
     @staticmethod
     def build_all() -> list[ScenarioConfig]:
@@ -367,7 +405,11 @@ class ScenarioFactory:
         Returns:
             List of ScenarioConfig, one per risk class.
         """
-        pass  # TODO: return [build_safe(), build_congesting(), build_critical()]
+        return [
+            ScenarioFactory.build_safe(),
+            ScenarioFactory.build_congesting(),
+            ScenarioFactory.build_critical(),
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +422,23 @@ class SimulationRunner:
 
     Each call to ``run()`` is fully deterministic given the same seed,
     enabling exact reproducibility of any generated sequence (SRD §4.7.4).
+
+    PySocialForce state format (per agent, 6 columns):
+        ``[px, py, vx, vy, gx, gy]``
+    where ``(px, py)`` is position, ``(vx, vy)`` is velocity, and
+    ``(gx, gy)`` is the goal position.
+
+    After stepping the simulator ``num_timesteps`` times, positions and
+    velocities are read from the accumulated ``peds.get_states()`` buffer and
+    returned as two ``float32`` NumPy arrays of shape
+    ``(num_timesteps, N, 2)``.
     """
+
+    # Congesting scenario: narrow passage occupies the horizontal centre of
+    # the scene. Agents start on one side and must squeeze through.
+    # Obstacle format for PySocialForce: [x_start, x_end, y_start, y_end]
+    _BOTTLENECK_GAP_WIDTH: float = 2.0   # metres, width of the passage opening
+    _BOTTLENECK_WALL_X: float = 10.0     # x-position of the wall (scene centre)
 
     def run(
         self,
@@ -409,38 +467,164 @@ class SimulationRunner:
         Raises:
             RuntimeError: If PySocialForce fails to initialize or step.
         """
-        pass  # TODO: implement PySocialForce simulation loop
+        import pysocialforce as psf  # deferred import — not available at CI lint time
+
+        # Use a local Generator so this call never modifies NumPy's global
+        # RNG state, making parallel or sequenced runs fully independent.
+        rng = np.random.default_rng(seed)
+
+        initial_state = self._build_initial_state(config, rng)
+        obstacles = self._build_obstacles(config)
+
+        try:
+            sim = psf.Simulator(
+                state=initial_state,
+                groups=None,
+                obstacles=obstacles,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"PySocialForce failed to initialize for scenario "
+                f"'{config.scenario_name}' (seed={seed}): {exc}"
+            ) from exc
+
+        try:
+            for _ in range(num_timesteps):
+                sim.step()
+        except Exception as exc:
+            raise RuntimeError(
+                f"PySocialForce step failed for scenario "
+                f"'{config.scenario_name}' (seed={seed}): {exc}"
+            ) from exc
+
+        # get_states() returns shape (T+1, N, 7); the +1 is the initial state
+        # recorded before the first step. We drop timestep 0 (pre-simulation)
+        # and retain exactly num_timesteps rows.
+        all_states, _ = sim.peds.get_states()
+        # Slice to (num_timesteps, N, 7), then extract pos and vel columns
+        states = all_states[1: num_timesteps + 1]  # shape (T, N, 7)
+        positions = states[:, :, 0:2].astype(np.float32)   # (T, N, 2)
+        velocities = states[:, :, 2:4].astype(np.float32)  # (T, N, 2)
+
+        return positions, velocities
 
     def _build_initial_state(
         self,
         config: ScenarioConfig,
+        rng: np.random.Generator,
     ) -> np.ndarray:
         """Samples random initial positions and goal positions for all agents.
 
+        For the Safe scenario agents are uniformly distributed across the
+        scene with goals sampled near the opposite side, producing natural
+        crossing flows.
+
+        For the Congesting scenario agents start on the left half of the
+        scene; goals are clustered tightly on the right side, forcing all
+        agents through the bottleneck obstacle.
+
+        For the Critical scenario agents start clustered at the scene centre
+        and flee outward in all directions (panic escape). Goal positions are
+        sampled near the scene boundary.
+
+        Initial velocity is set to ``initial_speed`` along the direction from
+        each agent's start position to its goal, so agents begin moving
+        immediately on the first step.
+
         Args:
             config: Active scenario configuration.
+            rng: Local NumPy Generator instance created in ``run()``.
+                Using a local generator avoids modifying NumPy's global
+                RNG state.
 
         Returns:
-            NumPy array of shape ``(N, 6)`` where columns are
-            ``[px, py, vx, vy, gx, gy]`` — the PySocialForce initial
-            state format.
+            NumPy array of shape ``(N, 6)`` with columns
+            ``[px, py, vx, vy, gx, gy]``.
         """
-        pass  # TODO: implement initial state sampling
+        N = config.num_agents
+        W, H = config.scene_width, config.scene_height
+        speed = config.initial_speed
+        spread = config.goal_spread
+
+        if config.risk_class == "Safe":
+            # Agents distributed uniformly; goals scattered on the opposite half
+            px = rng.uniform(0.5, W * 0.45, size=N)
+            py = rng.uniform(0.5, H - 0.5, size=N)
+            gx = rng.uniform(W * 0.55, W - 0.5, size=N)
+            gy = rng.uniform(0.5, H - 0.5, size=N)
+
+        elif config.risk_class == "Congesting":
+            # Agents on the left; goals clustered at the right side exit point
+            px = rng.uniform(0.5, W * 0.4, size=N)
+            py = rng.uniform(0.5, H - 0.5, size=N)
+            goal_centre_x = W - 1.0
+            goal_centre_y = H / 2.0
+            gx = rng.normal(goal_centre_x, spread * 0.5, size=N)
+            gy = rng.normal(goal_centre_y, spread * 0.5, size=N)
+
+        else:  # Critical — panic escape from centre
+            centre_x, centre_y = W / 2.0, H / 2.0
+            # Agents clustered around the centre
+            px = rng.normal(centre_x, 1.5, size=N)
+            py = rng.normal(centre_y, 1.5, size=N)
+            # Goals near the scene boundary in all directions
+            angles = rng.uniform(0, 2 * np.pi, size=N)
+            radius = rng.uniform(W * 0.4, W * 0.5, size=N)
+            gx = centre_x + radius * np.cos(angles)
+            gy = centre_y + radius * np.sin(angles)
+
+        # Clip positions and goals to valid scene bounds with a small margin
+        margin = 0.3
+        px = np.clip(px, margin, W - margin)
+        py = np.clip(py, margin, H - margin)
+        gx = np.clip(gx, margin, W - margin)
+        gy = np.clip(gy, margin, H - margin)
+
+        # Compute unit direction from start to goal and apply initial speed
+        dx, dy = gx - px, gy - py
+        dist = np.hypot(dx, dy)
+        dist = np.where(dist < 1e-6, 1e-6, dist)   # avoid zero-division
+        vx = speed * dx / dist
+        vy = speed * dy / dist
+
+        state = np.column_stack([px, py, vx, vy, gx, gy])  # (N, 6)
+        return state.astype(np.float64)
 
     def _build_obstacles(
         self,
         config: ScenarioConfig,
-    ) -> list[Any] | None:
+    ) -> list[list[float]] | None:
         """Constructs PySocialForce obstacle definitions from scenario config.
+
+        Only the Congesting scenario uses obstacles (a wall with a narrow
+        central passage). Safe and Critical scenarios return ``None``.
+
+        Obstacle format expected by PySocialForce:
+            ``[x_start, x_end, y_start, y_end]`` — axis-aligned line segments.
 
         Args:
             config: Active scenario configuration.
 
         Returns:
-            List of obstacle objects for PySocialForce, or ``None`` if the
-            scenario has no obstacles.
+            A list of ``[x_start, x_end, y_start, y_end]`` obstacle
+            definitions for the Congesting scenario, or ``None`` for all
+            other scenarios.
         """
-        pass  # TODO: implement obstacle construction
+        if config.risk_class != "Congesting":
+            return None
+
+        H = config.scene_height
+        x = self._BOTTLENECK_WALL_X
+        gap = self._BOTTLENECK_GAP_WIDTH
+        gap_start = (H / 2.0) - (gap / 2.0)
+        gap_end = (H / 2.0) + (gap / 2.0)
+
+        # Wall below the gap
+        lower_wall = [x, x, 0.0, gap_start]
+        # Wall above the gap
+        upper_wall = [x, x, gap_end, H]
+
+        return [lower_wall, upper_wall]
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +642,9 @@ class AutoLabeler:
 
     The labeling rules are priority-ordered: Critical is evaluated before
     Congesting before Safe, ensuring danger classes are never suppressed.
+
+    All methods are deterministic: given identical inputs they always
+    produce identical outputs. No random state is used.
     """
 
     def label_sequence(
@@ -468,16 +655,26 @@ class AutoLabeler:
     ) -> list[str]:
         """Labels all timesteps in a trajectory sequence.
 
+        Iterates over each timestep, computes crowd metrics via
+        ``_compute_metrics``, and assigns a risk label via ``_apply_rules``.
+
         Args:
             positions: Agent positions of shape ``(T, N, 2)``.
             velocities: Agent velocities of shape ``(T, N, 2)``.
-            config: Scenario config; used to consult ``enable_panic`` flag.
+            config: Scenario config; ``enable_panic`` flag is forwarded
+                to ``_apply_rules`` to lower the Critical threshold.
 
         Returns:
             List of risk label strings of length ``T``, each element being
             one of ``"Safe"``, ``"Congesting"``, or ``"Critical"``.
         """
-        pass  # TODO: iterate over timesteps and call _compute_metrics + _apply_rules
+        T = positions.shape[0]
+        labels: list[str] = []
+        for t in range(T):
+            metrics = self._compute_metrics(positions[t], velocities[t])
+            label = self._apply_rules(metrics, config.enable_panic)
+            labels.append(label)
+        return labels
 
     def _compute_metrics(
         self,
@@ -486,21 +683,71 @@ class AutoLabeler:
     ) -> dict[str, float]:
         """Computes crowd-level kinematic metrics for a single timestep.
 
+        **mean_local_density**: For every agent, counts how many other agents
+        lie within ``PROXIMITY_RADIUS_M`` metres. The per-agent count is
+        averaged across all agents and normalized by the maximum possible
+        count ``(N - 1)`` so the result lies in ``[0, 1]``. Returns ``0.0``
+        when there is only one agent.
+
+        **mean_speed**: Mean L2 norm of velocity vectors across all ``N``
+        agents in metres per second.
+
+        **velocity_divergence**: Mean cosine *dissimilarity*
+        ``(1 - cosine_similarity)`` computed over all unique agent pairs.
+        A value of ``0`` means all agents move in exactly the same direction;
+        a value of ``1`` means agents are moving in perfectly opposite
+        directions on average. Returns ``0.0`` when fewer than two agents
+        have non-zero velocity.
+
         Args:
             pos_t: Agent positions at timestep t; shape ``(N, 2)``.
             vel_t: Agent velocities at timestep t; shape ``(N, 2)``.
 
         Returns:
-            Dictionary with keys:
-                - ``"mean_local_density"`` (float): Normalized average
-                  number of neighbours within ``PROXIMITY_RADIUS_M``.
-                - ``"mean_speed"`` (float): Mean L2 velocity norm across
-                  all agents (m/s).
-                - ``"velocity_divergence"`` (float): Mean of
-                  ``(1 - cosine_similarity)`` across all agent pairs;
-                  0 = perfectly aligned, 1 = fully chaotic.
+            Dictionary with float values for keys ``"mean_local_density"``,
+            ``"mean_speed"``, and ``"velocity_divergence"``.
         """
-        pass  # TODO: implement metric computation
+        N = pos_t.shape[0]
+
+        # -- mean_local_density --
+        if N <= 1:
+            mean_local_density = 0.0
+        else:
+            # Pairwise squared distances via broadcasting: (N, 1, 2) - (1, N, 2)
+            diff = pos_t[:, np.newaxis, :] - pos_t[np.newaxis, :, :]  # (N, N, 2)
+            sq_dist = (diff ** 2).sum(axis=2)                          # (N, N)
+            # Neighbour count per agent (exclude self by checking > 0 dist)
+            within_radius = (sq_dist < PROXIMITY_RADIUS_M ** 2) & (sq_dist > 0.0)
+            neighbour_counts = within_radius.sum(axis=1).astype(float)  # (N,)
+            mean_local_density = float(neighbour_counts.mean() / (N - 1))
+
+        # -- mean_speed --
+        speeds = np.linalg.norm(vel_t, axis=1)   # (N,)
+        mean_speed = float(speeds.mean())
+
+        # -- velocity_divergence --
+        vel_norms = speeds                         # reuse (N,)
+        moving = vel_norms > 1e-8                  # mask of agents with non-zero velocity
+        n_moving = int(moving.sum())
+
+        if n_moving < 2:
+            velocity_divergence = 0.0
+        else:
+            v_moving = vel_t[moving]               # (M, 2)
+            norms_moving = vel_norms[moving]       # (M,)
+            unit_v = v_moving / norms_moving[:, np.newaxis]  # (M, 2)
+            # Cosine similarity matrix: (M, M) via dot product of unit vectors
+            cos_sim = unit_v @ unit_v.T            # (M, M), values in [-1, 1]
+            # Dissimilarity for all unique pairs (upper triangle, excluding diag)
+            i_upper, j_upper = np.triu_indices(n_moving, k=1)
+            pair_dissimilarity = 1.0 - cos_sim[i_upper, j_upper]
+            velocity_divergence = float(pair_dissimilarity.mean())
+
+        return {
+            "mean_local_density": mean_local_density,
+            "mean_speed": mean_speed,
+            "velocity_divergence": velocity_divergence,
+        }
 
     def _apply_rules(
         self,
@@ -509,7 +756,22 @@ class AutoLabeler:
     ) -> str:
         """Applies priority-ordered labeling rules to a metrics snapshot.
 
-        Priority order (highest to lowest): Critical → Congesting → Safe.
+        Rules are evaluated highest-priority first so that Critical is never
+        overridden by a Congesting or Safe condition.
+
+        Priority 1 — **Critical (panic path)**: triggered when ``enable_panic``
+        is ``True`` *and* either the divergence or speed exceeds its Critical
+        threshold. Reflects PySocialForce's active panic/escape forces.
+
+        Priority 2 — **Critical (density path)**: triggered when both density
+        and divergence are above their Critical thresholds. Captures genuine
+        high-density chaotic situations regardless of the panic flag.
+
+        Priority 3 — **Congesting**: triggered when density *or* divergence
+        exceeds its Congesting threshold, indicating compression or flow
+        disruption without full panic.
+
+        Priority 4 — **Safe**: default when none of the above conditions hold.
 
         Args:
             metrics: Output of ``_compute_metrics`` for one timestep.
@@ -519,20 +781,55 @@ class AutoLabeler:
         Returns:
             One of ``"Safe"``, ``"Congesting"``, or ``"Critical"``.
         """
-        pass  # TODO: implement threshold rule logic
+        density = metrics["mean_local_density"]
+        speed = metrics["mean_speed"]
+        divergence = metrics["velocity_divergence"]
+
+        # Priority 1: panic-mode Critical
+        if enable_panic and (
+            divergence > DIVERGENCE_CRITICAL_THRESH
+            or speed > SPEED_CRITICAL_THRESH
+        ):
+            return "Critical"
+
+        # Priority 2: density-driven Critical
+        if (
+            density > DENSITY_CRITICAL_THRESH
+            and divergence > DIVERGENCE_CONGESTING_THRESH
+        ):
+            return "Critical"
+
+        # Priority 3: Congesting
+        if (
+            density > DENSITY_CONGESTING_THRESH
+            or divergence > DIVERGENCE_CONGESTING_THRESH
+        ):
+            return "Congesting"
+
+        # Priority 4: Safe (default)
+        return "Safe"
 
     @staticmethod
     def compute_label_distribution(labels: list[str]) -> dict[str, int]:
         """Counts occurrences of each risk label in a labeled sequence.
 
+        All three canonical risk classes are always present as keys even if
+        their count is zero, so downstream consumers can rely on a fixed
+        dictionary structure without guarding against missing keys.
+
         Args:
-            labels: List of risk label strings of length T.
+            labels: List of risk label strings of length T. Every element
+                must be one of the values in ``RISK_CLASSES``.
 
         Returns:
             Dictionary mapping each risk class to its timestep count,
             e.g. ``{"Safe": 280, "Congesting": 15, "Critical": 5}``.
+            Keys are always exactly the three values in ``RISK_CLASSES``.
         """
-        pass  # TODO: implement distribution counting
+        distribution: dict[str, int] = {cls: 0 for cls in RISK_CLASSES}
+        for label in labels:
+            distribution[label] += 1
+        return distribution
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +843,12 @@ class DatasetSerializer:
     The JSON output of this class is the authoritative integration contract
     between simulate_data.py and prepare_datasets.py. The schema is defined
     by the ``TrajectoryRecord.to_dict()`` method.
+
+    Each call to ``save_record`` writes exactly one ``<sequence_id>.json``
+    file. After all records are saved, ``write_manifest`` writes a single
+    ``manifest.json`` that indexes the entire dataset. Both methods are
+    deterministic: identical inputs always produce identical byte-for-byte
+    output.
     """
 
     def save_record(
@@ -553,38 +856,113 @@ class DatasetSerializer:
         record: TrajectoryRecord,
         output_dir: str,
     ) -> str:
-        """Serializes one TrajectoryRecord to a JSON file.
+        """Validates and serializes one TrajectoryRecord to a JSON file.
+
+        The output filename is ``<sequence_id>.json``. The file is written
+        with 2-space indentation and sorted keys so that diffs are
+        human-readable and output is deterministic regardless of insertion
+        order.
 
         Args:
-            record: A validated TrajectoryRecord instance.
+            record: A ``TrajectoryRecord`` instance. ``validate()`` is
+                called before writing; any validation failure raises
+                ``ValueError`` without creating the file.
             output_dir: Directory path where the JSON file will be written.
-                Created if it does not already exist.
+                Created (including intermediate directories) if it does not
+                already exist.
 
         Returns:
-            Absolute path of the written JSON file.
+            Absolute path of the written JSON file as a string.
 
         Raises:
-            IOError: If the file cannot be written.
+            ValueError: If ``record.validate()`` fails.
+            IOError: If the file cannot be written to ``output_dir``.
         """
-        pass  # TODO: implement JSON write logic
+        record.validate()
+
+        out_path = os.path.join(output_dir, f"{record.sequence_id}.json")
+        os.makedirs(output_dir, exist_ok=True)
+
+        try:
+            with open(out_path, "w", encoding="utf-8") as fh:
+                json.dump(record.to_dict(), fh, indent=2, sort_keys=True)
+                fh.write("\n")  # POSIX-compliant trailing newline
+        except OSError as exc:
+            raise IOError(
+                f"Failed to write record '{record.sequence_id}' "
+                f"to '{out_path}': {exc}"
+            ) from exc
+
+        logger.debug("Saved record '%s' → %s", record.sequence_id, out_path)
+        return os.path.abspath(out_path)
 
     def write_manifest(
         self,
         records: list[TrajectoryRecord],
         output_dir: str,
     ) -> None:
-        """Writes the dataset manifest to manifest.json in output_dir.
+        """Writes a manifest.json index for an entire dataset.
 
-        The manifest contains one entry per TrajectoryRecord with fields:
-        ``sequence_id``, ``risk_class``, ``scenario_name``,
-        ``num_timesteps``, ``num_agents``, ``file_path``,
-        ``label_distribution``, ``generation_seed``.
+        The manifest is a JSON array sorted by ``sequence_id`` so that
+        entries are always in a stable, deterministic order. Each entry
+        contains lightweight metadata only — no trajectory arrays — so the
+        file remains small regardless of dataset size.
+
+        Manifest entry schema::
+
+            {
+              "sequence_id":        str,
+              "risk_class":         str,
+              "scenario_name":      str,
+              "num_agents":         int,
+              "num_timesteps":      int,
+              "generation_seed":    int,
+              "label_distribution": {"Safe": int, "Congesting": int, "Critical": int},
+              "file_path":          str   // relative path from output_dir
+            }
 
         Args:
-            records: All TrajectoryRecord instances produced in this run.
-            output_dir: Directory where manifest.json will be written.
+            records: All ``TrajectoryRecord`` instances produced in this
+                generation run. May be empty, in which case an empty array
+                is written.
+            output_dir: Directory where ``manifest.json`` will be written.
+                Created if it does not already exist.
+
+        Raises:
+            IOError: If the manifest file cannot be written.
         """
-        pass  # TODO: implement manifest write logic
+        os.makedirs(output_dir, exist_ok=True)
+        manifest_path = os.path.join(output_dir, "manifest.json")
+
+        entries: list[dict[str, Any]] = sorted(
+            [
+                {
+                    "sequence_id": rec.sequence_id,
+                    "risk_class": rec.risk_class,
+                    "scenario_name": rec.scenario_name,
+                    "num_agents": rec.num_agents,
+                    "num_timesteps": rec.num_timesteps,
+                    "generation_seed": rec.generation_seed,
+                    "label_distribution": dict(rec.label_distribution),
+                    "file_path": f"{rec.sequence_id}.json",
+                }
+                for rec in records
+            ],
+            key=lambda e: e["sequence_id"],
+        )
+
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as fh:
+                json.dump(entries, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+        except OSError as exc:
+            raise IOError(
+                f"Failed to write manifest to '{manifest_path}': {exc}"
+            ) from exc
+
+        logger.info(
+            "Manifest written: %d record(s) → %s", len(records), manifest_path
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +980,13 @@ def generate_dataset(config_path: str) -> None:
     instances, saves them with ``DatasetSerializer``, and writes
     ``manifest.json``.
 
+    Seed strategy: each run receives a globally unique seed computed as::
+
+        seed = random_seed_base + (scenario_index * num_runs_per_scenario) + run_index
+
+    This guarantees that every run—across all scenarios—has a distinct seed
+    while remaining fully reproducible from ``random_seed_base`` alone.
+
     Prints a summary table to stdout on completion showing total runs,
     per-class label distribution, and total dataset size on disk.
 
@@ -613,13 +998,77 @@ def generate_dataset(config_path: str) -> None:
 
     Raises:
         FileNotFoundError: If ``config_path`` does not exist.
-        KeyError: If the ``simulation`` section is missing from the YAML.
+        KeyError: If the ``simulation`` section or a required key is missing.
     """
-    pass  # TODO: implement full orchestration logic
+    t_start = time.monotonic()
+
+    sim_cfg = _load_simulation_config(config_path)
+    num_runs: int = sim_cfg["num_runs_per_scenario"]
+    num_timesteps: int = sim_cfg["num_timesteps"]
+    seed_base: int = sim_cfg["random_seed_base"]
+    output_dir: str = sim_cfg["output_dir"]
+
+    logger.info(
+        "Dataset generation started — %d scenarios × %d runs × %d timesteps → %s",
+        3, num_runs, num_timesteps, output_dir,
+    )
+
+    scenarios = ScenarioFactory.build_all()
+    runner = SimulationRunner()
+    labeler = AutoLabeler()
+    serializer = DatasetSerializer()
+    records: list[TrajectoryRecord] = []
+
+    for scenario_idx, config in enumerate(scenarios):
+        logger.info(
+            "Scenario %d/3: %s (%s)",
+            scenario_idx + 1, config.scenario_name, config.risk_class,
+        )
+        for run_idx in range(num_runs):
+            seed = seed_base + scenario_idx * num_runs + run_idx
+            sequence_id = f"{config.scenario_name}_run_{run_idx:03d}"
+
+            positions, velocities = runner.run(config, seed=seed, num_timesteps=num_timesteps)
+
+            frame_labels = labeler.label_sequence(positions, velocities, config)
+            label_distribution = AutoLabeler.compute_label_distribution(frame_labels)
+
+            record = TrajectoryRecord(
+                sequence_id=sequence_id,
+                risk_class=config.risk_class,
+                scenario_name=config.scenario_name,
+                num_agents=config.num_agents,
+                num_timesteps=num_timesteps,
+                generation_seed=seed,
+                label_distribution=label_distribution,
+                positions=positions.tolist(),
+                velocities=velocities.tolist(),
+                frame_labels=frame_labels,
+            )
+
+            serializer.save_record(record, output_dir)
+            records.append(record)
+
+            if (run_idx + 1) % 10 == 0 or run_idx == num_runs - 1:
+                logger.info(
+                    "  %s: %d/%d runs complete", config.scenario_name, run_idx + 1, num_runs
+                )
+
+    serializer.write_manifest(records, output_dir)
+
+    elapsed = time.monotonic() - t_start
+    _print_summary(records, elapsed, output_dir)
 
 
 def _load_simulation_config(config_path: str) -> dict[str, Any]:
     """Loads and returns the ``simulation`` section from a YAML config file.
+
+    Validates that all required keys are present so that callers receive
+    a ``KeyError`` with a clear message rather than a silent ``None`` when
+    a key is missing.
+
+    Required keys: ``num_runs_per_scenario``, ``num_timesteps``,
+    ``random_seed_base``, ``output_dir``.
 
     Args:
         config_path: Path to the YAML configuration file.
@@ -629,9 +1078,33 @@ def _load_simulation_config(config_path: str) -> dict[str, Any]:
 
     Raises:
         FileNotFoundError: If the config file does not exist.
-        KeyError: If the YAML file has no ``simulation`` section.
+        KeyError: If the YAML file has no ``simulation`` section, or if
+            a required key is absent from that section.
     """
-    pass  # TODO: implement YAML loading
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"Configuration file not found: '{config_path}'"
+        )
+
+    with open(config_path, encoding="utf-8") as fh:
+        full_config: dict[str, Any] = yaml.safe_load(fh)
+
+    if "simulation" not in full_config:
+        raise KeyError(
+            f"YAML file '{config_path}' has no 'simulation' section. "
+            "Add a 'simulation:' block with keys: num_runs_per_scenario, "
+            "num_timesteps, random_seed_base, output_dir."
+        )
+
+    sim: dict[str, Any] = full_config["simulation"]
+    required_keys = ("num_runs_per_scenario", "num_timesteps", "random_seed_base", "output_dir")
+    missing = [k for k in required_keys if k not in sim]
+    if missing:
+        raise KeyError(
+            f"simulation section in '{config_path}' is missing required key(s): {missing}"
+        )
+
+    return sim
 
 
 def _print_summary(
@@ -641,12 +1114,43 @@ def _print_summary(
 ) -> None:
     """Prints a formatted dataset generation summary to stdout.
 
+    Displays total run count, per-scenario breakdown, aggregate label
+    distribution across all timesteps, and elapsed wall-clock time.
+
     Args:
         records: All TrajectoryRecord instances produced in this run.
         elapsed_seconds: Total wall-clock time for generation in seconds.
         output_dir: Directory where files were written.
     """
-    pass  # TODO: implement summary printing
+    total_timesteps = sum(r.num_timesteps for r in records)
+    aggregate: dict[str, int] = {cls: 0 for cls in RISK_CLASSES}
+    for rec in records:
+        for cls, count in rec.label_distribution.items():
+            aggregate[cls] += count
+
+    # Group by scenario for the per-scenario row
+    scenario_counts: dict[str, int] = {}
+    for rec in records:
+        scenario_counts[rec.scenario_name] = scenario_counts.get(rec.scenario_name, 0) + 1
+
+    sep = "─" * 52
+    print(f"\n{'CrowdFlow DNA — Dataset Generation Complete':^52}")
+    print(sep)
+    print(f"  Output directory : {output_dir}")
+    print(f"  Total sequences  : {len(records)}")
+    print(f"  Total timesteps  : {total_timesteps:,}")
+    print(f"  Elapsed time     : {elapsed_seconds:.1f}s")
+    print(sep)
+    print("  Per-scenario sequences:")
+    for name, count in sorted(scenario_counts.items()):
+        print(f"    {name:<30} {count:>4} runs")
+    print(sep)
+    print("  Aggregate label distribution (timesteps):")
+    for cls in RISK_CLASSES:
+        pct = aggregate[cls] / total_timesteps * 100 if total_timesteps else 0.0
+        print(f"    {cls:<12} {aggregate[cls]:>8,}  ({pct:5.1f}%)")
+    print(sep)
+
 
 
 # ---------------------------------------------------------------------------
