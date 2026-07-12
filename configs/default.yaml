@@ -37,3 +37,19 @@ rendering:
     Critical: [0, 0, 255]      # Red
   bbox_thickness: 2
   edge_thickness: 1
+
+simulation:
+  # Number of simulation runs per scenario (Safe / Congesting / Critical).
+  # Total files = num_runs_per_scenario × 3.
+  num_runs_per_scenario: 100
+
+  # Number of PySocialForce timesteps per run.
+  num_timesteps: 300
+
+  # Base random seed. Run i of scenario S gets seed = random_seed_base + offset.
+  # Keeping this fixed makes the entire dataset fully reproducible.
+  random_seed_base: 0
+
+  # Directory where JSON trajectory files and manifest.json are written.
+  # Relative paths are resolved from the repository root.
+  output_dir: "data/synthetic"
