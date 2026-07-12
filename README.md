@@ -12,6 +12,14 @@ CrowdFlow DNA is an independent portfolio project that analyzes uploaded crowd v
 - **GNN/Temporal Inference**: A PyTorch GAT+GRU model (exported to ONNX) predicts risk classes.
 - **Rendering & UI**: Gradio application hosted on Hugging Face Spaces provides the frontend, annotated video, and risk timeline.
 
+## Development
+
+AI-assisted development in this repository follows:
+
+- AGENTS.md
+- WORKFLOW.md
+- CODING_STANDARDS.md
+
 ## Quickstart (Development)
 
 ### 1. Local Setup
@@ -42,3 +50,4 @@ python app.py
 This project is developed jointly by **Piyush Gupta** (AI & Data Lead) and **Aayushi Gupta** (Pipeline & Frontend Lead). 
 
 Please refer to the `CrowdFlow_DNA_Team_Workflow_Guide_v5.docx` for complete repository integration workflows, Git branch strategies, and module interface contracts.
+
