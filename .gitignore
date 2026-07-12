@@ -41,6 +41,7 @@ env/
 # Project Specific
 data/
 outputs/
+*.log
 *.mp4
 *.avi
 *.pt
