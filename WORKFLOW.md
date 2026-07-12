@@ -1,4 +1,5 @@
 # CrowdDNA Git Workflow
+This document defines the project's "standard workflow". Whenever an instruction says "Follow the standard workflow", follow every step in this document.
 
 ## Branch Strategy
 

@@ -1,4 +1,5 @@
 # CrowdDNA AI Development Guide
+Whenever an instruction says "Follow the repository documentation", read and follow AGENTS.md, WORKFLOW.md, CODING_STANDARDS.md, PROJECT_STATUS.md, ROADMAP.md, ARCHITECTURE.md and DECISIONS.md before making architectural decisions.
 
 ## Purpose
 
