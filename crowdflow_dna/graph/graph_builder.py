@@ -179,6 +179,19 @@ class GraphBuilder:
             )
 
     @staticmethod
+    def _compute_speed(velocities: np.ndarray) -> np.ndarray:
+        """Computes the per-agent L2 speed from a velocity array.
+
+        Args:
+            velocities: Float32 array of shape ``(N, 2)``.
+
+        Returns:
+            Float32 array of shape ``(N,)`` containing the speed
+            (Euclidean norm of the velocity vector) for each agent.
+        """
+        return np.linalg.norm(velocities, axis=1).astype(np.float32)
+
+    @staticmethod
     def _build_node_features(
         positions: np.ndarray,
         velocities: np.ndarray,
@@ -186,7 +199,7 @@ class GraphBuilder:
         """Constructs the (N, 5) node feature tensor.
 
         Features per node: [x, y, vx, vy, speed].
-        Speed is the L2 norm of the velocity vector.
+        Speed is computed via :meth:`_compute_speed`.
 
         Args:
             positions: Float32 array of shape ``(N, 2)``.
@@ -198,7 +211,7 @@ class GraphBuilder:
         if positions.shape[0] == 0:
             return torch.zeros((0, 5), dtype=torch.float32)
 
-        speed = np.linalg.norm(velocities, axis=1, keepdims=True).astype(np.float32)
+        speed = GraphBuilder._compute_speed(velocities)[:, np.newaxis]
         features = np.concatenate([positions, velocities, speed], axis=1)
         return torch.from_numpy(features)
 

@@ -100,6 +100,47 @@ class TestValidateInputs:
             )
 
 
+
+# ---------------------------------------------------------------------------
+# _compute_speed
+# ---------------------------------------------------------------------------
+
+class TestComputeSpeed:
+    def test_empty_array_returns_empty(self):
+        result = GraphBuilder._compute_speed(np.zeros((0, 2), dtype=np.float32))
+        assert result.shape == (0,)
+        assert result.dtype == np.float32
+
+    def test_known_3_4_5_right_triangle(self):
+        vel = _vel((3.0, 4.0))
+        result = GraphBuilder._compute_speed(vel)
+        assert result[0] == pytest.approx(5.0, abs=1e-6)
+
+    def test_stationary_agent_speed_is_zero(self):
+        result = GraphBuilder._compute_speed(_vel((0.0, 0.0)))
+        assert result[0] == pytest.approx(0.0)
+
+    def test_output_shape_is_n(self):
+        vel = _vel((1.0, 0.0), (0.0, 1.0), (1.0, 1.0))
+        result = GraphBuilder._compute_speed(vel)
+        assert result.shape == (3,)
+
+    def test_output_dtype_is_float32(self):
+        result = GraphBuilder._compute_speed(_vel((1.0, 2.0)))
+        assert result.dtype == np.float32
+
+    def test_unit_vector_speed_is_one(self):
+        result = GraphBuilder._compute_speed(_vel((1.0, 0.0)))
+        assert result[0] == pytest.approx(1.0, abs=1e-6)
+
+    def test_multiple_agents_correct_speeds(self):
+        vel = _vel((3.0, 4.0), (0.0, 0.0), (1.0, 0.0))
+        result = GraphBuilder._compute_speed(vel)
+        assert result[0] == pytest.approx(5.0, abs=1e-6)
+        assert result[1] == pytest.approx(0.0, abs=1e-6)
+        assert result[2] == pytest.approx(1.0, abs=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # _build_node_features
 # ---------------------------------------------------------------------------
