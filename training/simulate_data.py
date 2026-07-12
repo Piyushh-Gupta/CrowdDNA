@@ -152,7 +152,10 @@ class TrajectoryRecord:
 
     Attributes:
         sequence_id: Unique run identifier (e.g. ``"safe_open_field_run_042"``).
-        risk_class: Scenario-level intended class.
+        risk_class: Scenario-level intended class. This identifies the
+            scenario used to generate the sequence. It is scenario metadata
+            only and is not guaranteed to match the majority of
+            ``frame_labels``.
         scenario_name: Source scenario (matches ``ScenarioConfig.scenario_name``).
         num_agents: Number of agents tracked in this run.
         num_timesteps: Number of timesteps actually recorded.
@@ -162,7 +165,8 @@ class TrajectoryRecord:
             stored as nested Python lists for JSON compatibility.
         velocities: Agent velocities per timestep; shape ``(T, N, 2)``,
             stored as nested Python lists for JSON compatibility.
-        frame_labels: Per-timestep risk label; length ``T``.
+        frame_labels: Per-timestep risk label; length ``T``. These are the
+            authoritative per-timestep labels used by downstream components.
     """
 
     sequence_id: str
