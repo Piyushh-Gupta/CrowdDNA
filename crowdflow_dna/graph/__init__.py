@@ -1,3 +1,3 @@
-from crowdflow_dna.graph.graph_builder import Detection, GraphBuilder
+from crowdflow_dna.graph.graph_builder import GraphBuilder
 
-__all__ = ["GraphBuilder", "Detection"]
+__all__ = ["GraphBuilder"]

@@ -1,12 +1,12 @@
 """
 Tests for crowdflow_dna/graph/graph_builder.py.
 
-Strategy: GraphBuilder._build_node_features() and _build_edges() are tested
-directly with numpy/torch only, avoiding a PyTorch Geometric import so that
-these tests run in the lightweight CI environment.
+Strategy: _build_node_features(), _build_edges(), and _validate_inputs() are
+tested directly with numpy/torch only so that the entire test class runs in
+the lightweight CI environment without requiring torch_geometric.
 
-The build() method (which requires torch_geometric) is tested only when
-the package is available; otherwise the tests are skipped.
+The build() method (which requires torch_geometric) is guarded by a skipif
+decorator and skipped gracefully when the package is absent.
 """
 
 from __future__ import annotations
@@ -14,38 +14,31 @@ from __future__ import annotations
 import pathlib
 import sys
 
+import numpy as np
 import pytest
 import torch
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
-from crowdflow_dna.graph.graph_builder import Detection, GraphBuilder
+from crowdflow_dna.graph.graph_builder import GraphBuilder
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _det(track_id: int, x: float, y: float, conf: float = 1.0) -> Detection:
-    """Shorthand for creating a Detection."""
-    return Detection(track_id=track_id, x=x, y=y, confidence=conf)
-
-
-def _builder(radius: float = 0.15) -> GraphBuilder:
+def _builder(radius: float = 0.5) -> GraphBuilder:
     return GraphBuilder(proximity_radius=radius)
 
 
-# ---------------------------------------------------------------------------
-# Detection dataclass
-# ---------------------------------------------------------------------------
+def _pos(*rows: tuple[float, float]) -> np.ndarray:
+    """Shorthand: create a float32 position array of shape (N, 2)."""
+    return np.array(rows, dtype=np.float32)
 
-class TestDetection:
-    def test_fields_accessible(self):
-        d = Detection(track_id=1, x=0.5, y=0.3, confidence=0.9)
-        assert d.track_id == 1
-        assert d.x == 0.5
-        assert d.y == 0.3
-        assert d.confidence == 0.9
+
+def _vel(*rows: tuple[float, float]) -> np.ndarray:
+    """Shorthand: create a float32 velocity array of shape (N, 2)."""
+    return np.array(rows, dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -75,42 +68,91 @@ class TestGraphBuilderInit:
 
 
 # ---------------------------------------------------------------------------
+# _validate_inputs
+# ---------------------------------------------------------------------------
+
+class TestValidateInputs:
+    def test_valid_inputs_pass_silently(self):
+        GraphBuilder._validate_inputs(_pos((0.1, 0.2)), _vel((0.3, 0.4)))
+
+    def test_positions_1d_raises(self):
+        with pytest.raises(ValueError, match="positions"):
+            GraphBuilder._validate_inputs(
+                np.array([0.1, 0.2], dtype=np.float32), _vel((0.0, 0.0))
+            )
+
+    def test_positions_3_columns_raises(self):
+        with pytest.raises(ValueError, match="positions"):
+            GraphBuilder._validate_inputs(
+                np.zeros((2, 3), dtype=np.float32), _vel((0.0, 0.0), (0.0, 0.0))
+            )
+
+    def test_velocities_1d_raises(self):
+        with pytest.raises(ValueError, match="velocities"):
+            GraphBuilder._validate_inputs(
+                _pos((0.1, 0.2)), np.array([0.3, 0.4], dtype=np.float32)
+            )
+
+    def test_mismatched_agent_count_raises(self):
+        with pytest.raises(ValueError, match="same number of agents"):
+            GraphBuilder._validate_inputs(
+                _pos((0.1, 0.2), (0.3, 0.4)), _vel((0.0, 0.0))
+            )
+
+
+# ---------------------------------------------------------------------------
 # _build_node_features
 # ---------------------------------------------------------------------------
 
 class TestBuildNodeFeatures:
-    def test_empty_detections_returns_zero_tensors(self):
-        gb = _builder()
-        feats, ids = gb._build_node_features([])
-        assert feats.shape == (0, 3)
-        assert ids.shape == (0,)
+    def test_empty_returns_zero_tensor(self):
+        feats = GraphBuilder._build_node_features(
+            np.zeros((0, 2), dtype=np.float32),
+            np.zeros((0, 2), dtype=np.float32),
+        )
+        assert feats.shape == (0, 5)
         assert feats.dtype == torch.float32
-        assert ids.dtype == torch.long
 
-    def test_single_detection_shape(self):
-        gb = _builder()
-        feats, ids = gb._build_node_features([_det(7, 0.3, 0.4, 0.8)])
-        assert feats.shape == (1, 3)
-        assert ids.shape == (1,)
+    def test_shape_is_n_by_5(self):
+        pos = _pos((0.1, 0.2), (0.3, 0.4), (0.5, 0.6))
+        vel = _vel((1.0, 0.0), (0.0, 1.0), (1.0, 1.0))
+        feats = GraphBuilder._build_node_features(pos, vel)
+        assert feats.shape == (3, 5)
 
-    def test_feature_values_correct(self):
-        gb = _builder()
-        feats, ids = gb._build_node_features([_det(3, 0.1, 0.9, 0.75)])
-        assert torch.allclose(feats[0], torch.tensor([0.1, 0.9, 0.75]))
-        assert ids[0].item() == 3
+    def test_x_y_columns_match_positions(self):
+        pos = _pos((0.1, 0.9))
+        vel = _vel((0.0, 0.0))
+        feats = GraphBuilder._build_node_features(pos, vel)
+        assert torch.allclose(feats[0, :2], torch.tensor([0.1, 0.9]))
 
-    def test_multiple_detections_order_preserved(self):
-        gb = _builder()
-        dets = [_det(1, 0.2, 0.3, 0.9), _det(2, 0.5, 0.6, 0.7)]
-        feats, ids = gb._build_node_features(dets)
-        assert feats.shape == (2, 3)
-        assert ids[0].item() == 1
-        assert ids[1].item() == 2
+    def test_vx_vy_columns_match_velocities(self):
+        pos = _pos((0.5, 0.5))
+        vel = _vel((0.3, 0.7))
+        feats = GraphBuilder._build_node_features(pos, vel)
+        assert torch.allclose(feats[0, 2:4], torch.tensor([0.3, 0.7]))
+
+    def test_speed_column_is_l2_norm(self):
+        pos = _pos((0.0, 0.0))
+        vel = _vel((3.0, 4.0))  # speed = 5.0
+        feats = GraphBuilder._build_node_features(pos, vel)
+        assert torch.allclose(feats[0, 4], torch.tensor(5.0), atol=1e-5)
+
+    def test_stationary_agent_has_zero_speed(self):
+        pos = _pos((0.5, 0.5))
+        vel = _vel((0.0, 0.0))
+        feats = GraphBuilder._build_node_features(pos, vel)
+        assert feats[0, 4].item() == pytest.approx(0.0)
 
     def test_dtype_is_float32(self):
-        gb = _builder()
-        feats, _ = gb._build_node_features([_det(0, 0.5, 0.5, 1.0)])
+        feats = GraphBuilder._build_node_features(_pos((0.1, 0.2)), _vel((0.1, 0.2)))
         assert feats.dtype == torch.float32
+
+    def test_order_of_agents_preserved(self):
+        pos = _pos((0.1, 0.2), (0.8, 0.9))
+        vel = _vel((1.0, 0.0), (0.0, 2.0))
+        feats = GraphBuilder._build_node_features(pos, vel)
+        assert torch.allclose(feats[0, :2], torch.tensor([0.1, 0.2]))
+        assert torch.allclose(feats[1, :2], torch.tensor([0.8, 0.9]))
 
 
 # ---------------------------------------------------------------------------
@@ -118,84 +160,128 @@ class TestBuildNodeFeatures:
 # ---------------------------------------------------------------------------
 
 class TestBuildEdges:
-    def test_empty_detections_no_edges(self):
+    def test_empty_positions_no_edges(self):
         gb = _builder()
-        ei, ea = gb._build_edges([])
+        ei, ea = gb._build_edges(
+            np.zeros((0, 2), dtype=np.float32),
+            np.zeros((0, 2), dtype=np.float32),
+        )
         assert ei.shape == (2, 0)
-        assert ea.shape == (0, 1)
+        assert ea.shape == (0, 4)
 
-    def test_single_detection_no_edges(self):
+    def test_single_agent_no_edges(self):
         gb = _builder()
-        ei, ea = gb._build_edges([_det(0, 0.5, 0.5)])
+        ei, ea = gb._build_edges(_pos((0.5, 0.5)), _vel((0.0, 0.0)))
         assert ei.shape == (2, 0)
-        assert ea.shape == (0, 1)
+        assert ea.shape == (0, 4)
 
-    def test_two_nearby_nodes_produce_two_directed_edges(self):
-        # Distance = 0.1 < radius 0.15 → one undirected edge = 2 directed
-        gb = _builder(radius=0.15)
-        dets = [_det(0, 0.0, 0.0), _det(1, 0.1, 0.0)]
-        ei, ea = gb._build_edges(dets)
-        assert ei.shape[1] == 2, "Undirected edge should appear in both directions"
-        assert ea.shape == (2, 1)
+    def test_two_nearby_agents_produce_two_directed_edges(self):
+        gb = _builder(radius=0.2)
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.1, 0.0)),
+            _vel((0.0, 0.0), (0.0, 0.0)),
+        )
+        assert ei.shape[1] == 2
 
-    def test_two_far_nodes_produce_no_edges(self):
-        # Distance = 0.5 > radius 0.15 → no edges
-        gb = _builder(radius=0.15)
-        dets = [_det(0, 0.0, 0.0), _det(1, 0.5, 0.0)]
-        ei, ea = gb._build_edges(dets)
+    def test_two_far_agents_produce_no_edges(self):
+        gb = _builder(radius=0.05)
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.5, 0.0)),
+            _vel((0.0, 0.0), (0.0, 0.0)),
+        )
         assert ei.shape[1] == 0
 
     def test_edge_exactly_at_radius_is_included(self):
         gb = _builder(radius=0.1)
-        dets = [_det(0, 0.0, 0.0), _det(1, 0.1, 0.0)]  # distance == 0.1
-        ei, ea = gb._build_edges(dets)
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.1, 0.0)),
+            _vel((0.0, 0.0), (0.0, 0.0)),
+        )
         assert ei.shape[1] == 2
 
-    def test_edge_attr_values_are_distances(self):
+    def test_edge_attr_shape_is_e_by_4(self):
         gb = _builder(radius=0.5)
-        dets = [_det(0, 0.0, 0.0), _det(1, 0.3, 0.4)]  # distance = 0.5
-        ei, ea = gb._build_edges(dets)
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.1, 0.0)),
+            _vel((1.0, 0.0), (0.0, 1.0)),
+        )
+        assert ea.shape == (ei.shape[1], 4)
+
+    def test_distance_column_is_correct(self):
+        gb = _builder(radius=1.0)
+        # distance = 0.5
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.3, 0.4)),
+            _vel((0.0, 0.0), (0.0, 0.0)),
+        )
         assert ei.shape[1] == 2
-        assert torch.allclose(ea, torch.tensor([[0.5], [0.5]]), atol=1e-5)
+        # column index 2 is distance
+        assert torch.allclose(ea[:, 2], torch.tensor([0.5, 0.5]), atol=1e-5)
 
-    def test_edge_index_dtype_is_long(self):
-        gb = _builder(radius=0.5)
-        dets = [_det(0, 0.0, 0.0), _det(1, 0.1, 0.0)]
-        ei, _ = gb._build_edges(dets)
-        assert ei.dtype == torch.long
+    def test_dx_dy_are_antisymmetric(self):
+        """Forward edge (dx, dy) must be the negative of the reverse edge."""
+        gb = _builder(radius=1.0)
+        pos = _pos((0.1, 0.2), (0.4, 0.6))
+        vel = _vel((0.0, 0.0), (0.0, 0.0))
+        ei, ea = gb._build_edges(pos, vel)
+        assert ei.shape[1] == 2
+        # Find which edge is forward (src < dst) and which is reverse
+        src, dst = ei[0].tolist(), ei[1].tolist()
+        fwd_idx = 0 if src[0] < dst[0] else 1
+        rev_idx = 1 - fwd_idx
+        assert torch.allclose(ea[fwd_idx, :2], -ea[rev_idx, :2], atol=1e-5)
 
-    def test_edge_attr_dtype_is_float32(self):
-        gb = _builder(radius=0.5)
-        dets = [_det(0, 0.0, 0.0), _det(1, 0.1, 0.0)]
-        _, ea = gb._build_edges(dets)
-        assert ea.dtype == torch.float32
+    def test_relative_speed_is_symmetric(self):
+        gb = _builder(radius=1.0)
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.1, 0.0)),
+            _vel((1.0, 0.0), (0.0, 1.0)),
+        )
+        # Column 3 is relative_speed — must be the same for both directions
+        assert torch.allclose(ea[0, 3], ea[1, 3], atol=1e-5)
 
-    def test_three_nodes_all_close_six_directed_edges(self):
-        # Equilateral triangle with side ~0.1 — all within radius 0.15
-        gb = _builder(radius=0.15)
-        dets = [
-            _det(0, 0.0, 0.0),
-            _det(1, 0.1, 0.0),
-            _det(2, 0.05, 0.087),  # approximately equilateral
-        ]
-        ei, ea = gb._build_edges(dets)
-        # 3 unique pairs × 2 directions = 6
-        assert ei.shape[1] == 6
+    def test_stationary_agents_have_zero_relative_speed(self):
+        gb = _builder(radius=1.0)
+        ei, ea = gb._build_edges(
+            _pos((0.0, 0.0), (0.1, 0.0)),
+            _vel((0.5, 0.5), (0.5, 0.5)),  # identical velocities
+        )
+        assert ea[:, 3].abs().max().item() == pytest.approx(0.0, abs=1e-6)
 
     def test_no_self_loops(self):
         gb = _builder(radius=1.0)
-        dets = [_det(0, 0.5, 0.5), _det(1, 0.6, 0.6)]
-        ei, _ = gb._build_edges(dets)
+        ei, _ = gb._build_edges(
+            _pos((0.1, 0.2), (0.3, 0.4)),
+            _vel((0.0, 0.0), (0.0, 0.0)),
+        )
         src, dst = ei[0], ei[1]
-        assert not (src == dst).any(), "Self-loops must not be present"
+        assert not (src == dst).any()
 
     def test_graph_is_symmetric(self):
         gb = _builder(radius=1.0)
-        dets = [_det(i, float(i) * 0.1, 0.0) for i in range(4)]
-        ei, _ = gb._build_edges(dets)
+        pos = _pos((0.0, 0.0), (0.1, 0.0), (0.2, 0.0), (0.3, 0.0))
+        vel = _vel((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
+        ei, _ = gb._build_edges(pos, vel)
         edges = set(zip(ei[0].tolist(), ei[1].tolist()))
         for s, d in list(edges):
-            assert (d, s) in edges, "Every edge must have its reverse"
+            assert (d, s) in edges
+
+    def test_three_agents_all_close_six_directed_edges(self):
+        gb = _builder(radius=0.15)
+        pos = _pos((0.0, 0.0), (0.1, 0.0), (0.05, 0.087))
+        vel = _vel((0.0, 0.0), (0.0, 0.0), (0.0, 0.0))
+        ei, _ = gb._build_edges(pos, vel)
+        assert ei.shape[1] == 6
+
+    def test_edge_index_dtype_is_long(self):
+        gb = _builder(radius=1.0)
+        ei, _ = gb._build_edges(_pos((0.0, 0.0), (0.1, 0.0)), _vel((0.0, 0.0), (0.0, 0.0)))
+        assert ei.dtype == torch.long
+
+    def test_edge_attr_dtype_is_float32(self):
+        gb = _builder(radius=1.0)
+        _, ea = gb._build_edges(_pos((0.0, 0.0), (0.1, 0.0)), _vel((0.0, 0.0), (0.0, 0.0)))
+        assert ea.dtype == torch.float32
 
 
 # ---------------------------------------------------------------------------
@@ -222,37 +308,46 @@ class TestBuild:
     def test_empty_returns_valid_data_object(self):
         from torch_geometric.data import Data
         gb = _builder()
-        g = gb.build([])
+        g = gb.build(np.zeros((0, 2), np.float32), np.zeros((0, 2), np.float32))
         assert isinstance(g, Data)
         assert g.num_nodes == 0
         assert g.edge_index.shape == (2, 0)
 
-    def test_single_node_no_edges(self):
+    def test_single_agent_no_edges(self):
         gb = _builder()
-        g = gb.build([_det(1, 0.5, 0.5)])
+        g = gb.build(_pos((0.5, 0.5)), _vel((0.0, 0.0)))
         assert g.num_nodes == 1
         assert g.edge_index.shape[1] == 0
 
-    def test_two_nearby_nodes_graph(self):
-        gb = _builder(radius=0.15)
-        g = gb.build([_det(0, 0.0, 0.0), _det(1, 0.1, 0.0)])
+    def test_two_nearby_agents_graph(self):
+        gb = _builder(radius=0.2)
+        g = gb.build(_pos((0.0, 0.0), (0.1, 0.0)), _vel((1.0, 0.0), (0.0, 1.0)))
         assert g.num_nodes == 2
         assert g.edge_index.shape == (2, 2)
-        assert g.x.shape == (2, 3)
+        assert g.x.shape == (2, 5)
+        assert g.edge_attr.shape == (2, 4)
 
-    def test_track_ids_in_data(self):
-        gb = _builder(radius=0.5)
-        dets = [_det(42, 0.1, 0.1), _det(99, 0.2, 0.2)]
-        g = gb.build(dets)
-        ids = g.track_ids.tolist()
-        assert 42 in ids
-        assert 99 in ids
+    def test_node_feature_shape_is_n_by_5(self):
+        gb = _builder(radius=1.0)
+        pos = np.random.default_rng(0).random((7, 2)).astype(np.float32)
+        vel = np.random.default_rng(1).random((7, 2)).astype(np.float32)
+        g = gb.build(pos, vel)
+        assert g.x.shape == (7, 5)
 
-    def test_node_feature_shape(self):
+    def test_mismatched_shapes_raise_value_error(self):
+        gb = _builder()
+        with pytest.raises(ValueError, match="same number of agents"):
+            gb.build(_pos((0.1, 0.2), (0.3, 0.4)), _vel((0.0, 0.0)))
+
+    def test_deterministic_output(self):
         gb = _builder(radius=0.5)
-        dets = [_det(i, float(i) * 0.1, 0.0) for i in range(5)]
-        g = gb.build(dets)
-        assert g.x.shape == (5, 3)
+        pos = _pos((0.1, 0.2), (0.3, 0.4))
+        vel = _vel((0.5, 0.6), (0.7, 0.8))
+        g1 = gb.build(pos, vel)
+        g2 = gb.build(pos, vel)
+        assert torch.equal(g1.x, g2.x)
+        assert torch.equal(g1.edge_index, g2.edge_index)
+        assert torch.equal(g1.edge_attr, g2.edge_attr)
 
     def test_build_import_error_without_pyg(self, monkeypatch):
         """build() should raise ImportError with a helpful message if PyG missing."""
@@ -267,4 +362,4 @@ class TestBuild:
         monkeypatch.setattr(builtins, "__import__", mock_import)
         gb = _builder()
         with pytest.raises(ImportError, match="torch_geometric"):
-            gb.build([_det(0, 0.5, 0.5)])
+            gb.build(_pos((0.5, 0.5)), _vel((0.0, 0.0)))
