@@ -1,5 +1,4 @@
 import os
-import sys
 
 base_dir = r"c:\Users\piyus\Downloads\CrowdDNA"
 
