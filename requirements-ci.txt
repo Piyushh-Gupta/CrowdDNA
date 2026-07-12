@@ -1,6 +1,6 @@
 # CI / Testing Dependencies
 # Lightweight subset of requirements.txt for fast GitHub Actions runs.
-# Heavy training-only packages (torch, torch-geometric, ultralytics,
+# Heavy training-only packages (torch-geometric, ultralytics,
 # onnx, onnxruntime, gradio) are excluded until Phase 5-8 code is merged
 # and must be run in full in that phase's CI job.
 
@@ -8,6 +8,7 @@ numpy==1.26.4
 pyyaml>=6.0
 pysocialforce==1.1.2
 networkx==3.2.1
+torch==2.2.1
 
 # Testing & Linting
 pytest==8.0.2
