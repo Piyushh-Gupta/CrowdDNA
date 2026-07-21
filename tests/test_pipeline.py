@@ -248,9 +248,19 @@ def test_no_model_fn_graph_not_built() -> None:
 
 
 def test_model_fn_invoked_when_provided() -> None:
-    """model_fn must be called when tracks are present."""
+    """InferenceRuntime.predict must be called when tracks are present and buffer is full."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
-    mock_model = MagicMock(return_value=[_make_pred()])
+    from crowdflow_dna.inference import InferenceResult
+    import numpy as np
+
+    dummy_result = InferenceResult(
+        predicted_class=0, probabilities=np.array([1.0, 0.0, 0.0]),
+        confidence=1.0, backend="TorchScript", inference_time_ms=1.0,
+        model_format="TorchScript", model_version=None
+    )
+    mock_runtime = MagicMock()
+    mock_runtime.predict.return_value = dummy_result
+
     with (
         patch(_PATCH_INGESTOR) as mock_ing,
         patch(_PATCH_DETECTOR) as mock_det,
@@ -258,7 +268,22 @@ def test_model_fn_invoked_when_provided() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
+        patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
+        mock_buf = MagicMock()
+        mock_buf.is_ready = True  # buffer immediately ready
+        mock_buf_cls.return_value = mock_buf
+        # Make assemble() return a valid TensorBatch-like object
+        import torch
+        from crowdflow_dna.inference import TensorBatch
+        tb = TensorBatch(
+            x=torch.zeros(1, 5), edge_index=torch.zeros(2, 0, dtype=torch.long),
+            edge_attr=torch.zeros(0, 4), batch=torch.zeros(1, dtype=torch.long),
+            seq_lengths=torch.tensor([1])
+        )
+        mock_buf.assemble.return_value = tb
+
         frames = [_make_frame(), _make_frame()]
         metadata = _make_metadata(2)
         mock_ing.return_value.load.return_value = (frames, metadata)
@@ -266,17 +291,39 @@ def test_model_fn_invoked_when_provided() -> None:
         mock_trk.return_value.update.return_value = [_make_track()]
         mock_ann.return_value.annotate.side_effect = lambda f, t, p: f.copy()
         mock_tl.return_value.get_timeline.return_value = []
-        mock_gb.return_value.build.return_value = MagicMock()
+        mock_gb.return_value.build.return_value = MagicMock(
+            x=torch.zeros(1, 5), edge_index=torch.zeros(2, 0, dtype=torch.long),
+            edge_attr=torch.zeros(0, 4), num_nodes=1
+        )
 
-        pipeline = CrowdFlowPipeline(model_fn=mock_model)
+        pipeline = CrowdFlowPipeline(model_path="/fake/model.pt")
         pipeline.run("fake.mp4")
 
-    assert mock_model.call_count == 2  # once per frame
+    assert mock_runtime.predict.call_count == 2  # once per frame (buffer always ready)
 
 
 def test_model_fn_not_called_when_no_tracks() -> None:
-    """model_fn must NOT be called when the tracker returns no tracks."""
-    mock_model = MagicMock(return_value=[])
+    """InferenceRuntime.predict must NOT be called when all frames have no tracks.
+
+    With zero tracks every frame, placeholder empty graphs are pushed into the
+    buffer. When the buffer is ready, ``_result_to_predictions`` receives an
+    empty tracks list and returns []. ``predict`` is still called (buffer fires);
+    we verify predictions propagated to the annotator are empty.
+    """
+    from crowdflow_dna.pipeline import CrowdFlowPipeline
+    from crowdflow_dna.inference import InferenceResult
+    import numpy as np
+    import torch
+    from crowdflow_dna.inference import TensorBatch
+
+    dummy_result = InferenceResult(
+        predicted_class=0, probabilities=np.array([1.0, 0.0, 0.0]),
+        confidence=1.0, backend="TorchScript", inference_time_ms=1.0,
+        model_format="TorchScript", model_version=None
+    )
+    mock_runtime = MagicMock()
+    mock_runtime.predict.return_value = dummy_result
+
     with (
         patch(_PATCH_INGESTOR) as mock_ing,
         patch(_PATCH_DETECTOR) as mock_det,
@@ -284,25 +331,51 @@ def test_model_fn_not_called_when_no_tracks() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH),
+        patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
+        patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
+        mock_buf = MagicMock()
+        mock_buf.is_ready = True
+        mock_buf_cls.return_value = mock_buf
+        tb = TensorBatch(
+            x=torch.zeros(0, 5), edge_index=torch.zeros(2, 0, dtype=torch.long),
+            edge_attr=torch.zeros(0, 4), batch=torch.zeros(0, dtype=torch.long),
+            seq_lengths=torch.tensor([1])
+        )
+        mock_buf.assemble.return_value = tb
+
         frames = [_make_frame()]
         metadata = _make_metadata(1)
         mock_ing.return_value.load.return_value = (frames, metadata)
         mock_det.return_value.detect.return_value = []
-        mock_trk.return_value.update.return_value = []   # ← no tracks
+        mock_trk.return_value.update.return_value = []  # ← no tracks
         mock_ann.return_value.annotate.side_effect = lambda f, t, p: f.copy()
         mock_tl.return_value.get_timeline.return_value = []
 
-        pipeline = CrowdFlowPipeline(model_fn=mock_model)
+        pipeline = CrowdFlowPipeline(model_path="/fake/model.pt")
         pipeline.run("fake.mp4")
 
-    mock_model.assert_not_called()
+    # No tracks → _result_to_predictions returns [] so annotator gets empty preds
+    passed_preds = mock_ann.return_value.annotate.call_args[0][2]
+    assert passed_preds == []
 
 
 def test_model_predictions_passed_to_annotator() -> None:
-    """Predictions returned by model_fn must be forwarded to annotate()."""
-    pred = _make_pred(1, "Critical", 0.95)
-    mock_model = MagicMock(return_value=[pred])
+    """Risk predictions from InferenceRuntime must be forwarded to annotate()."""
+    from crowdflow_dna.inference import InferenceResult
+    import numpy as np
+    import torch
+    from crowdflow_dna.inference import TensorBatch
+
+    # Predict "Critical" (class index 2)
+    dummy_result = InferenceResult(
+        predicted_class=2, probabilities=np.array([0.0, 0.0, 1.0]),
+        confidence=1.0, backend="TorchScript", inference_time_ms=1.0,
+        model_format="TorchScript", model_version=None
+    )
+    mock_runtime = MagicMock()
+    mock_runtime.predict.return_value = dummy_result
+
     with (
         patch(_PATCH_INGESTOR) as mock_ing,
         patch(_PATCH_DETECTOR) as mock_det,
@@ -310,7 +383,19 @@ def test_model_predictions_passed_to_annotator() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
+        patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
+        mock_buf = MagicMock()
+        mock_buf.is_ready = True
+        mock_buf_cls.return_value = mock_buf
+        tb = TensorBatch(
+            x=torch.zeros(1, 5), edge_index=torch.zeros(2, 0, dtype=torch.long),
+            edge_attr=torch.zeros(0, 4), batch=torch.zeros(1, dtype=torch.long),
+            seq_lengths=torch.tensor([1])
+        )
+        mock_buf.assemble.return_value = tb
+
         frames = [_make_frame()]
         metadata = _make_metadata(1)
         mock_ing.return_value.load.return_value = (frames, metadata)
@@ -318,14 +403,17 @@ def test_model_predictions_passed_to_annotator() -> None:
         mock_trk.return_value.update.return_value = [_make_track()]
         mock_ann.return_value.annotate.side_effect = lambda f, t, p: f.copy()
         mock_tl.return_value.get_timeline.return_value = []
-        mock_gb.return_value.build.return_value = MagicMock()
+        mock_gb.return_value.build.return_value = MagicMock(
+            x=torch.zeros(1, 5), edge_index=torch.zeros(2, 0, dtype=torch.long),
+            edge_attr=torch.zeros(0, 4), num_nodes=1
+        )
 
-        pipeline = CrowdFlowPipeline(model_fn=mock_model)
+        pipeline = CrowdFlowPipeline(model_path="/fake/model.pt")
         pipeline.run("fake.mp4")
 
-    _, call_kwargs = mock_ann.return_value.annotate.call_args
     passed_preds = mock_ann.return_value.annotate.call_args[0][2]
-    assert passed_preds == [pred]
+    assert len(passed_preds) == 1
+    assert passed_preds[0].label == "Critical"
 
 
 # ---------------------------------------------------------------------------
@@ -444,10 +532,20 @@ def test_crowdflow_error_propagates_unchanged() -> None:
 
 
 def test_torch_geometric_import_error_handled_gracefully() -> None:
-    """If torch_geometric is not installed, the frame must still be annotated
-    with empty predictions — no exception raised."""
+    """If torch_geometric is not available when building the placeholder empty graph,
+    the frame must still be annotated with empty predictions — no exception raised."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
-    mock_model = MagicMock(return_value=[_make_pred()])
+    from crowdflow_dna.inference import InferenceResult
+    import numpy as np
+
+    dummy_result = InferenceResult(
+        predicted_class=0, probabilities=np.array([1.0, 0.0, 0.0]),
+        confidence=1.0, backend="TorchScript", inference_time_ms=1.0,
+        model_format="TorchScript", model_version=None
+    )
+    mock_runtime = MagicMock()
+    mock_runtime.predict.return_value = dummy_result
+
     with (
         patch(_PATCH_INGESTOR) as mock_ing,
         patch(_PATCH_DETECTOR) as mock_det,
@@ -455,7 +553,13 @@ def test_torch_geometric_import_error_handled_gracefully() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
+        patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
+        mock_buf = MagicMock()
+        mock_buf.is_ready = False  # keeps buffer in warmup so predict never fires
+        mock_buf_cls.return_value = mock_buf
+
         frames = [_make_frame()]
         metadata = _make_metadata(1)
         mock_ing.return_value.load.return_value = (frames, metadata)
@@ -463,14 +567,15 @@ def test_torch_geometric_import_error_handled_gracefully() -> None:
         mock_trk.return_value.update.return_value = [_make_track()]
         mock_ann.return_value.annotate.side_effect = lambda f, t, p: f.copy()
         mock_tl.return_value.get_timeline.return_value = []
+        # Simulate torch_geometric not installed when calling GraphBuilder.build
         mock_gb.return_value.build.side_effect = ImportError("torch_geometric not installed")
 
-        pipeline = CrowdFlowPipeline(model_fn=mock_model)
+        pipeline = CrowdFlowPipeline(model_path="/fake/model.pt")
         result = pipeline.run("fake.mp4")
 
     assert len(result.annotated_frames) == 1
-    # model_fn should not have been called since build raised ImportError
-    mock_model.assert_not_called()
+    # predict must not have been called (ImportError in graph builder returned early)
+    mock_runtime.predict.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

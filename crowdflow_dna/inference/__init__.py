@@ -8,6 +8,7 @@ from crowdflow_dna.inference.runtime import (
     UnsupportedModelFormatError,
     InferenceExecutionError,
 )
+from crowdflow_dna.inference.sequence_buffer import SequenceBuffer, TensorBatch
 
 __all__ = [
     "InferenceRuntime",
@@ -18,4 +19,6 @@ __all__ = [
     "ModelNotFoundError",
     "UnsupportedModelFormatError",
     "InferenceExecutionError",
+    "SequenceBuffer",
+    "TensorBatch",
 ]

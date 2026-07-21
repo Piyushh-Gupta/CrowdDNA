@@ -2,9 +2,14 @@
 
 Provides an interface to upload a video, run the CrowdFlowPipeline,
 and display the annotated video, risk timeline, and metadata.
+
+Set the ``CROWDDNA_MODEL_PATH`` environment variable to the path of an
+exported ``.pt`` or ``.onnx`` deployment model to enable inference mode.
+When the variable is absent, the pipeline runs in dummy mode.
 """
 
 import logging
+import os
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,11 +18,14 @@ import gradio as gr
 import numpy as np
 
 from crowdflow_dna.errors import CrowdFlowError
+from crowdflow_dna.inference import ModelNotFoundError, UnsupportedModelFormatError
 from crowdflow_dna.pipeline import CrowdFlowPipeline
 from crowdflow_dna.rendering.timeline import TimelineEntry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
 
 
 def _frames_to_video(frames: List[np.ndarray], fps: float) -> str:
@@ -111,7 +119,19 @@ def process_video(
         return None, [], [], "Please upload a video file."
 
     logger.info("Processing uploaded video: %s", video_file)
-    pipeline = CrowdFlowPipeline(model_fn=None)
+
+    # Attempt to build an inference-mode pipeline when a model path is configured.
+    # Fall back to dummy mode gracefully on any loading error.
+    inference_active = False
+    model_path = os.environ.get("CROWDDNA_MODEL_PATH")
+    try:
+        pipeline = CrowdFlowPipeline(model_path=model_path)
+        inference_active = model_path is not None
+    except (ModelNotFoundError, UnsupportedModelFormatError) as exc:
+        logger.warning(
+            "Could not load deployment model (%s). Falling back to dummy mode.", exc
+        )
+        pipeline = CrowdFlowPipeline(model_path=None)
 
     try:
         result = pipeline.run(video_file)
@@ -138,7 +158,10 @@ def process_video(
     timeline_data = _timeline_to_dataframe(result.timeline)
     metadata_data = _metadata_to_rows(result.metadata)
 
-    status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
+    if inference_active:
+        status_msg = f"✅ Analysis complete (inference mode — model: {model_path})."
+    else:
+        status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
     return output_path, timeline_data, metadata_data, status_msg
 
 
@@ -151,7 +174,7 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
         """
         # CrowdFlow DNA — Crowd Risk Analyser
         Upload a video to run the end-to-end vision pipeline.
-        Currently operating in **dummy mode** (no risk predictions) until the model is integrated.
+        Operating mode (inference or dummy) is determined dynamically by the `CROWDDNA_MODEL_PATH` environment variable.
         """
     )
 
