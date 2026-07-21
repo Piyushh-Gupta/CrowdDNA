@@ -22,9 +22,17 @@ neutral grey. This satisfies the Phase 7/8 Definition of Done.
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+try:
+    import torch
+    from torch_geometric.data import Data
+    _PYG_AVAILABLE = True
+except ImportError:
+    _PYG_AVAILABLE = False
 
 from crowdflow_dna import config
 from crowdflow_dna.detection.detector import Yolov8Detector
@@ -32,8 +40,13 @@ from crowdflow_dna.errors import CrowdFlowError, ModelInferenceError
 from crowdflow_dna.graph.graph_builder import GraphBuilder
 from crowdflow_dna.inference import (
     InferenceExecutionError,
+    InferenceResult,
     InferenceRuntime,
     SequenceBuffer,
+)
+from crowdflow_dna.inference.sequence_buffer import (
+    _EDGE_FEATURE_DIM,
+    _NODE_FEATURE_DIM,
 )
 from crowdflow_dna.ingestion.video_loader import VideoIngestor
 from crowdflow_dna.rendering.timeline import TimelineBuilder, TimelineEntry
@@ -114,7 +127,7 @@ class CrowdFlowPipeline:
 
     def __init__(
         self,
-        model_path: Optional[str] = None,
+        model_path: str | Path | None = None,
         model_version: Optional[str] = None,
         window_size: int = _WINDOW_SIZE,
     ) -> None:
@@ -340,14 +353,13 @@ class CrowdFlowPipeline:
                 positions, velocities = self._extract_arrays(tracks, width, height)
                 graph = graph_builder.build(positions, velocities)
             else:
+                if not _PYG_AVAILABLE:
+                    raise ImportError("torch_geometric not available")
                 # Insert a zero-node placeholder graph (contract §6.4)
-                import torch
-                from torch_geometric.data import Data
-
                 graph = Data(
-                    x=torch.zeros((0, 5), dtype=torch.float32),
+                    x=torch.zeros((0, _NODE_FEATURE_DIM), dtype=torch.float32),
                     edge_index=torch.zeros((2, 0), dtype=torch.long),
-                    edge_attr=torch.zeros((0, 4), dtype=torch.float32),
+                    edge_attr=torch.zeros((0, _EDGE_FEATURE_DIM), dtype=torch.float32),
                     num_nodes=0,
                 )
         except ImportError:
@@ -369,7 +381,7 @@ class CrowdFlowPipeline:
             logger.debug(
                 "Frame %d: buffer warming up (%d/%d frames).",
                 frame_index,
-                len(self._seq_buffer._buffer),  # noqa: SLF001
+                self._seq_buffer.current_size,
                 self._seq_buffer.window_size,
             )
             return []
@@ -396,7 +408,7 @@ class CrowdFlowPipeline:
 
     @staticmethod
     def _result_to_predictions(
-        result: Any,
+        result: InferenceResult,
         tracks: List[TrackItem],
     ) -> List[RiskPrediction]:
         """Translate an ``InferenceResult`` into scene-level ``RiskPrediction`` objects.
@@ -413,6 +425,11 @@ class CrowdFlowPipeline:
         """
         if not tracks:
             return []
+
+        if not (0 <= result.predicted_class < len(_CLASS_NAMES)):
+            raise ModelInferenceError(
+                f"Model returned invalid predicted_class index: {result.predicted_class}"
+            )
 
         label = _CLASS_NAMES[result.predicted_class]
         confidence = result.confidence

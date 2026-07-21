@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 _NODE_FEATURE_DIM: int = 5
 _EDGE_FEATURE_DIM: int = 4
 
+# Shared constants to avoid repeated allocations (issue m4)
+_EMPTY_EDGE_INDEX = torch.zeros((2, 0), dtype=torch.long)
+_EMPTY_EDGE_ATTR = torch.zeros((0, _EDGE_FEATURE_DIM), dtype=torch.float32)
+_EMPTY_NODE_X = torch.zeros((0, _NODE_FEATURE_DIM), dtype=torch.float32)
+
 
 class TensorBatch(NamedTuple):
     """Flat-tensor representation of a single-sequence batch.
@@ -88,6 +93,11 @@ class SequenceBuffer:
         return self._window_size
 
     @property
+    def current_size(self) -> int:
+        """Number of frames currently in the buffer."""
+        return len(self._buffer)
+
+    @property
     def is_ready(self) -> bool:
         """True when the buffer holds exactly ``window_size`` frames."""
         return len(self._buffer) == self._window_size
@@ -137,23 +147,19 @@ class SequenceBuffer:
             if n > 0:
                 x_parts.append(data.x.float())
             else:
-                x_parts.append(torch.zeros((0, _NODE_FEATURE_DIM), dtype=torch.float32))
+                x_parts.append(_EMPTY_NODE_X)
 
             # -- Edge indices with global offset -----------------------
             if data.edge_index.shape[1] > 0:
                 edge_index_parts.append(data.edge_index + cumulative_offset)
             else:
-                edge_index_parts.append(
-                    torch.zeros((2, 0), dtype=torch.long)
-                )
+                edge_index_parts.append(_EMPTY_EDGE_INDEX)
 
             # -- Edge attributes ---------------------------------------
             if data.edge_attr.shape[0] > 0:
                 edge_attr_parts.append(data.edge_attr.float())
             else:
-                edge_attr_parts.append(
-                    torch.zeros((0, _EDGE_FEATURE_DIM), dtype=torch.float32)
-                )
+                edge_attr_parts.append(_EMPTY_EDGE_ATTR)
 
             # -- Batch vector (node → frame index) ---------------------
             if n > 0:

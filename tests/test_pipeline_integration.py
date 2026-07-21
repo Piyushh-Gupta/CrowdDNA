@@ -26,6 +26,7 @@ from crowdflow_dna.inference import (
     TensorBatch,
     UnsupportedModelFormatError,
 )
+from crowdflow_dna.errors import ModelInferenceError
 from crowdflow_dna.pipeline import CrowdFlowPipeline, PipelineResult
 from crowdflow_dna.schemas import TrackItem
 
@@ -72,7 +73,7 @@ def _make_track(track_id: int = 1) -> TrackItem:
 
 
 def _mock_inference_result(predicted_class: int = 0) -> InferenceResult:
-    probs = np.zeros(3, dtype=np.float64)
+    probs = np.zeros(max(3, predicted_class + 1), dtype=np.float64)
     probs[predicted_class] = 1.0
     return InferenceResult(
         predicted_class=predicted_class,
@@ -216,6 +217,12 @@ class TestResultToPredictions:
             result = _mock_inference_result(predicted_class=cls_idx)
             preds = CrowdFlowPipeline._result_to_predictions(result, tracks)
             assert preds[0].label == expected_label
+
+    def test_raises_model_inference_error_on_invalid_predicted_class(self):
+        result = _mock_inference_result(predicted_class=99)
+        tracks = [_make_track()]
+        with pytest.raises(ModelInferenceError, match="invalid predicted_class index"):
+            CrowdFlowPipeline._result_to_predictions(result, tracks)
 
 
 # ---------------------------------------------------------------------------
