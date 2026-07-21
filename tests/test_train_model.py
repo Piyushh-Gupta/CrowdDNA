@@ -154,7 +154,7 @@ def test_checkpoint_manager(tmp_path):
     ckpt_dir = tmp_path / "checkpoints"
     manager = CheckpointManager(str(ckpt_dir))
     
-    manager.save(model, optimizer, scheduler, epoch=5, best_val_metric=0.5, config={"test": 1}, is_best=True)
+    manager.save(model, optimizer, scheduler, epoch=5, best_val_metric=0.5, config={"test": 1}, is_best=True, early_stopping_state={"counter": 2, "best_loss": 0.5})
     
     assert (ckpt_dir / "latest.pt").exists()
     assert (ckpt_dir / "best.pt").exists()
@@ -163,10 +163,12 @@ def test_checkpoint_manager(tmp_path):
     new_model = Linear(10, 2)
     new_optimizer = SGD(new_model.parameters(), lr=0.5)
     
-    epoch, best_val = manager.load(str(ckpt_dir / "best.pt"), new_model, new_optimizer)
+    epoch, best_val, es_state = manager.load(str(ckpt_dir / "best.pt"), new_model, new_optimizer)
     
     assert epoch == 5
     assert best_val == 0.5
+    assert es_state is not None
+    assert es_state["counter"] == 2
     # Verify weights transferred
     assert torch.allclose(model.weight, new_model.weight)
 

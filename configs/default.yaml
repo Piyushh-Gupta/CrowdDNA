@@ -67,4 +67,5 @@ training:
   scheduler_factor: 0.5
   checkpoint_dir: "checkpoints"
   random_seed: 42
+  deterministic: true
   validation_split: 0.2

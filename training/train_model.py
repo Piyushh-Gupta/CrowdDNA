@@ -27,13 +27,16 @@ from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfi
 logger = logging.getLogger(__name__)
 
 
-def set_random_seed(seed: int) -> None:
+def set_random_seed(seed: int, deterministic: bool = False) -> None:
     """Sets the random seed for reproducible training."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+        if deterministic:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,7 @@ class CheckpointManager:
         best_val_metric: float,
         config: dict[str, Any],
         is_best: bool = False,
+        early_stopping_state: dict[str, Any] | None = None,
     ) -> None:
         state = {
             "model_state": model.state_dict(),
@@ -133,6 +137,7 @@ class CheckpointManager:
             "epoch": epoch,
             "best_val_metric": best_val_metric,
             "config": config,
+            "early_stopping_state": early_stopping_state,
         }
         
         latest_path = self.checkpoint_dir / "latest.pt"
@@ -148,8 +153,8 @@ class CheckpointManager:
         model: torch.nn.Module,
         optimizer: torch.optim.Optimizer | None = None,
         scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
-    ) -> tuple[int, float]:
-        """Loads state into the provided modules. Returns (start_epoch, best_val_metric)."""
+    ) -> tuple[int, float, dict[str, Any] | None]:
+        """Loads state into the provided modules. Returns (start_epoch, best_val_metric, early_stopping_state)."""
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Checkpoint not found at {path}")
             
@@ -162,7 +167,11 @@ class CheckpointManager:
         if scheduler and state.get("scheduler_state"):
             scheduler.load_state_dict(state["scheduler_state"])
             
-        return state.get("epoch", 0), state.get("best_val_metric", float("inf"))
+        return (
+            state.get("epoch", 0),
+            state.get("best_val_metric", float("inf")),
+            state.get("early_stopping_state")
+        )
 
 
 class Trainer:
@@ -174,7 +183,8 @@ class Trainer:
             
         train_cfg = self.config.get("training", {})
         self.seed = train_cfg.get("random_seed", 42)
-        set_random_seed(self.seed)
+        deterministic = train_cfg.get("deterministic", False)
+        set_random_seed(self.seed, deterministic)
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -191,11 +201,13 @@ class Trainer:
         )
         
         batch_size = train_cfg.get("batch_size", 4)
+        loader_gen = torch.Generator().manual_seed(self.seed)
         self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=batch_size,
             shuffle=True,
             collate_fn=sequence_collate_fn,
+            generator=loader_gen,
         )
         self.val_loader = DataLoader(
             self.val_dataset,
@@ -233,11 +245,14 @@ class Trainer:
         
         # 5. Resume Support
         if resume_checkpoint:
-            start_epoch, best_val = self.checkpoint_manager.load(
+            start_epoch, best_val, es_state = self.checkpoint_manager.load(
                 resume_checkpoint, self.model, self.optimizer, self.scheduler
             )
             self.start_epoch = start_epoch + 1
             self.early_stopping.best_loss = best_val
+            if es_state:
+                self.early_stopping.counter = es_state.get("counter", 0)
+                self.early_stopping.best_loss = es_state.get("best_loss", best_val)
             logger.info(f"Resumed from checkpoint {resume_checkpoint} at epoch {start_epoch}")
 
     def _train_epoch(self) -> dict[str, float]:
@@ -245,6 +260,9 @@ class Trainer:
         self.metrics_tracker.reset()
         
         for batch in self.train_loader:
+            # NOTE: Per-frame device transfers are a consequence of the current model interface
+            # (which expects list[list[Data]]). A future optimization should switch to using
+            # PyG's native Batch across the entire sequence to avoid these micro-transfers.
             sequences_on_device = [
                 [data.to(self.device) for data in seq] for seq in batch.sequences
             ]
@@ -268,6 +286,9 @@ class Trainer:
         
         with torch.no_grad():
             for batch in self.val_loader:
+                # NOTE: Per-frame device transfers are a consequence of the current model interface
+                # (which expects list[list[Data]]). A future optimization should switch to using
+                # PyG's native Batch across the entire sequence to avoid these micro-transfers.
                 sequences_on_device = [
                     [data.to(self.device) for data in seq] for seq in batch.sequences
                 ]
@@ -314,6 +335,11 @@ class Trainer:
                 best_val_loss = val_metrics["loss"]
                 best_epoch = epoch
                 
+            es_state = {
+                "counter": self.early_stopping.counter,
+                "best_loss": self.early_stopping.best_loss,
+            }
+            
             self.checkpoint_manager.save(
                 model=self.model,
                 optimizer=self.optimizer,
@@ -322,6 +348,7 @@ class Trainer:
                 best_val_metric=best_val_loss,
                 config=self.config,
                 is_best=is_best,
+                early_stopping_state=es_state,
             )
             
             logger.info(
