@@ -11,6 +11,8 @@ pysocialforce==1.1.2
 networkx==3.2.1
 torch==2.2.1
 ultralytics==8.1.29
+gradio==4.21.0
+huggingface-hub<0.24.0  # Required by gradio 4.21.0
 
 # Testing & Linting
 pytest==8.0.2
