@@ -134,16 +134,16 @@ class CrowdDNAGAT(Module):
         # Final MLP classifier head
         self.classifier = Linear(config.hidden_channels, config.out_channels)
 
-    def forward(self, data: Data) -> Tensor:
-        """Forward pass of the GAT model.
+    def extract_features(self, data: Data) -> Tensor:
+        """Extracts graph embeddings using the GAT layers (without classifier head).
 
         Args:
             data: PyG Data object containing x (node features), edge_index (COO format),
                   edge_attr (edge features), and batch (node-to-graph mapping for batched inputs).
 
         Returns:
-            Logits of shape (batch_size, out_channels).
-            Zero tensor for empty graphs (0 nodes) representing a uniform prior.
+            Embeddings of shape (batch_size, hidden_channels).
+            Zero tensor for empty graphs (0 nodes).
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         
@@ -152,9 +152,11 @@ class CrowdDNAGAT(Module):
 
         # Handle empty graph
         if x.size(0) == 0:
+            # This guard applies primarily when CrowdDNAGAT is used standalone.
+            # CrowdDNAModel validates non-empty sequences before calling extract_features.
             logger.warning("CrowdDNAGAT received an empty graph at inference time.")
             batch_size = int(batch.max().item() + 1) if batch.numel() > 0 else 1
-            return torch.zeros((batch_size, self.config.out_channels), device=x.device)
+            return torch.zeros((batch_size, self.config.hidden_channels), device=x.device)
 
         # Apply GAT layers with ELU activations and dropout
         for i, conv in enumerate(self.convs):
@@ -165,7 +167,18 @@ class CrowdDNAGAT(Module):
 
         # Global average pooling (N, hidden_channels) -> (Batch, hidden_channels)
         x = global_mean_pool(x, batch)
+        return x
 
-        # Classifier
-        logits = self.classifier(x)
-        return logits
+    def forward(self, data: Data) -> Tensor:
+        """Forward pass of the GAT model including the classifier head.
+
+        Args:
+            data: PyG Data object containing x (node features), edge_index (COO format),
+                  edge_attr (edge features), and batch (node-to-graph mapping for batched inputs).
+
+        Returns:
+            Logits of shape (batch_size, out_channels).
+            Zero tensor for empty graphs (0 nodes) representing a uniform prior.
+        """
+        # extract_features handles the empty-graph case
+        return self.classifier(self.extract_features(data))
