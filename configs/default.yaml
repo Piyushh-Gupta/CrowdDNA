@@ -18,8 +18,8 @@ tracking:
   match_thresh: 0.8
 
 graph:
-  # Maximum Euclidean distance (in normalized frame coordinates 0-1) to create an edge
-  proximity_radius: 0.15
+  # Maximum Euclidean distance (in metres) to create an edge
+  proximity_radius: 2.0
 
 model:
   # GNN + GRU architecture hyperparameters

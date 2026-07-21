@@ -9,7 +9,7 @@ arrays produced by the Phase 5 synthetic training pipeline
 (``TrajectoryRecord.positions``, ``TrajectoryRecord.velocities``).
 
 Each pedestrian becomes a node; undirected edges connect pairs whose
-normalised Euclidean distance is within the configured proximity radius.
+Euclidean distance is within the configured proximity radius (in metres).
 
 Node features  (N, 5): [x, y, vx, vy, speed]
 Edge features  (E, 4): [dx, dy, distance, relative_speed]
@@ -50,7 +50,7 @@ class GraphBuilder:
 
     Responsibility boundary:
         - Receives ``positions (N, 2)`` and ``velocities (N, 2)``
-          in normalised frame coordinates for a single frame.
+          for a single frame. Coordinate scale (e.g. metres) is maintained.
         - Returns a ``torch_geometric.data.Data`` object.
         - Does NOT perform detection, tracking, serialisation, or inference.
     """
@@ -59,16 +59,15 @@ class GraphBuilder:
         """Initialises the GraphBuilder.
 
         Args:
-            proximity_radius: Maximum normalised Euclidean distance between
-                two pedestrian centres for an edge to be created. Must be
-                in the range (0, 1] since coordinates are normalised.
+            proximity_radius: Maximum Euclidean distance between
+                two pedestrian centres for an edge to be created (in metres).
 
         Raises:
-            ValueError: If ``proximity_radius`` is not in (0, 1].
+            ValueError: If ``proximity_radius`` is not strictly positive.
         """
-        if not (0.0 < proximity_radius <= 1.0):
+        if proximity_radius <= 0.0:
             raise ValueError(
-                f"proximity_radius must be in (0, 1], got {proximity_radius}."
+                f"proximity_radius must be > 0.0, got {proximity_radius}."
             )
         self._proximity_radius = proximity_radius
 
@@ -87,7 +86,7 @@ class GraphBuilder:
         ``[x, y, vx, vy, speed]`` for each agent.
 
         Edges are undirected and connect every pair of agents whose
-        normalised Euclidean distance is within ``proximity_radius``.
+        Euclidean distance is within ``proximity_radius``.
         Self-loops are excluded. Edge indices are stored in COO format as
         a ``(2, E)`` long tensor.
 
@@ -102,7 +101,7 @@ class GraphBuilder:
 
         Args:
             positions: Agent positions for a single frame.
-                Shape ``(N, 2)``, dtype float32-compatible, values in [0, 1].
+                Shape ``(N, 2)``, dtype float32-compatible.
             velocities: Agent velocities for the same frame.
                 Shape ``(N, 2)``, dtype float32-compatible.
 

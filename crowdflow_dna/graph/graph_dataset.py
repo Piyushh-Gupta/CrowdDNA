@@ -2,6 +2,7 @@
 CrowdFlow DNA — Graph Dataset
 ==============================
 Module: crowdflow_dna/graph/graph_dataset.py
+Owner:  Piyush Gupta (AI & Data Lead)
 
 Dataset layer bridging synthetic trajectory JSON files to PyTorch Geometric.
 Reads manifest.json, lazily loads JSON records, and converts them to
@@ -13,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import torch
@@ -24,27 +25,24 @@ from crowdflow_dna.graph.graph_builder import GraphBuilder
 logger = logging.getLogger(__name__)
 
 
+LABEL_MAP: dict[str, int] = {
+    "Safe": 0,
+    "Congesting": 1,
+    "Critical": 2,
+}
+
+
 class GraphDataset(Dataset):
     """PyTorch Geometric Dataset for loading synthetic crowd trajectories.
 
     Lazily loads JSON trajectory files specified in a manifest and yields
-    sequences of PyG Data objects representing per-frame proximity graphs.
-
-    To prevent unnecessary I/O, each `get(idx)` call loads one complete
-    JSON sequence and returns a list of T Data objects, matching the
-    expected input format for downstream temporal encoders (e.g. GRU).
+    individual PyG Data objects representing per-frame proximity graphs.
     """
-
-    LABEL_MAP = {
-        "Safe": 0,
-        "Congesting": 1,
-        "Critical": 2,
-    }
 
     def __init__(
         self,
         root: str,
-        proximity_radius: float = 0.15,
+        proximity_radius: float = 2.0,
         transform: Optional[Callable] = None,
         pre_transform: Optional[Callable] = None,
     ) -> None:
@@ -52,24 +50,25 @@ class GraphDataset(Dataset):
 
         Args:
             root: Directory containing manifest.json and trajectory files.
-            proximity_radius: Radius for edge creation in GraphBuilder.
+            proximity_radius: Physical radius (metres) for edge creation.
             transform: Optional PyG transform applied to each Data object.
             pre_transform: Optional PyG pre-transform.
         """
+        # Pass root=None to prevent PyG from creating raw/processed folders
+        # and attempting file processing logic. We handle loading natively.
+        super().__init__(root=None, transform=transform, pre_transform=pre_transform)
+        
         self.data_dir = root
         self.proximity_radius = proximity_radius
         self.builder = GraphBuilder(proximity_radius)
         self.manifest_path = os.path.join(self.data_dir, "manifest.json")
 
         self._manifest: list[dict[str, Any]] = []
+        self._index_map: list[tuple[int, int]] = []
         self._load_manifest()
 
-        # Pass root=None to prevent PyG from creating raw/processed folders
-        # and attempting file processing logic. We handle loading natively.
-        super().__init__(root=None, transform=transform, pre_transform=pre_transform)
-
     def _load_manifest(self) -> None:
-        """Loads and validates manifest.json."""
+        """Loads and validates manifest.json and builds the flat index map."""
         if not os.path.isfile(self.manifest_path):
             raise FileNotFoundError(f"Manifest not found at {self.manifest_path}")
 
@@ -84,27 +83,35 @@ class GraphDataset(Dataset):
         if not isinstance(self._manifest, list):
             raise ValueError(f"Manifest at {self.manifest_path} must be a JSON array.")
 
-    def len(self) -> int:
-        """Returns the total number of trajectory sequences."""
-        return len(self._manifest)
+        # Build flat index map: maps global idx to (sequence_idx, timestep_idx)
+        for seq_idx, entry in enumerate(self._manifest):
+            num_timesteps = entry.get("num_timesteps", 0)
+            for t in range(num_timesteps):
+                self._index_map.append((seq_idx, t))
 
-    def get(self, idx: int) -> List[Data]:
-        """Loads a single trajectory sequence and converts it to graphs.
+    def len(self) -> int:
+        """Returns the total number of frames (graphs) across all trajectories."""
+        return len(self._index_map)
+
+    def get(self, idx: int) -> Data:
+        """Loads a single graph for a specific timestep.
 
         Args:
-            idx: Index of the sequence in the manifest.
+            idx: Global index of the frame.
 
         Returns:
-            A list of PyG Data objects, one per timestep in the sequence.
+            A single PyG Data object.
 
         Raises:
             FileNotFoundError: If the trajectory JSON file is missing.
             ValueError: If the JSON is invalid or the schema is corrupted.
         """
-        entry = self._manifest[idx]
+        seq_idx, t = self._index_map[idx]
+        entry = self._manifest[seq_idx]
+        
         file_name = entry.get("file_path")
         if not file_name:
-            raise ValueError(f"Manifest entry {idx} is missing 'file_path'")
+            raise ValueError(f"Manifest entry {seq_idx} is missing 'file_path'")
 
         file_path = os.path.join(self.data_dir, file_name)
         if not os.path.isfile(file_path):
@@ -132,21 +139,25 @@ class GraphDataset(Dataset):
                 f"positions={positions.shape[0]}, velocities={velocities.shape[0]}"
             )
 
-        graphs: List[Data] = []
-        for t in range(num_timesteps):
-            pos_t = positions[t]
-            vel_t = velocities[t]
+        pos_t = positions[t]
+        vel_t = velocities[t]
 
-            # Build PyG Data object
-            data = self.builder.build(pos_t, vel_t)
+        # Build PyG Data object
+        data = self.builder.build(pos_t, vel_t)
 
-            # Preserve label
-            label_str = labels[t]
-            if label_str not in self.LABEL_MAP:
-                raise ValueError(f"Unknown label '{label_str}' in {file_path}")
+        # Preserve label
+        label_str = labels[t]
+        if label_str not in LABEL_MAP:
+            raise ValueError(f"Unknown label '{label_str}' in {file_path}")
 
-            # Store as a 1D tensor
-            data.y = torch.tensor([self.LABEL_MAP[label_str]], dtype=torch.long)
-            graphs.append(data)
+        # Store as a 1D tensor
+        data.y = torch.tensor([LABEL_MAP[label_str]], dtype=torch.long)
+        
+        # Attach metadata
+        data.sequence_id = record.get("sequence_id", f"seq_{seq_idx}")
+        data.timestep = t
 
-        return graphs
+        if self.transform is not None:
+            data = self.transform(data)
+
+        return data

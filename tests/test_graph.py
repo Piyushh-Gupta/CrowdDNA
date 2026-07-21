@@ -62,9 +62,9 @@ class TestGraphBuilderInit:
         with pytest.raises(ValueError):
             GraphBuilder(proximity_radius=-0.1)
 
-    def test_above_one_raises(self):
-        with pytest.raises(ValueError):
-            GraphBuilder(proximity_radius=1.01)
+    def test_above_one_accepted(self):
+        gb = GraphBuilder(proximity_radius=2.0)
+        assert gb.proximity_radius == 2.0
 
 
 # ---------------------------------------------------------------------------

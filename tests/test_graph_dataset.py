@@ -47,11 +47,19 @@ def generate_valid_record(seq_id, labels):
 
 
 def test_manifest_loading_success(data_dir):
-    """Test successful loading of a valid manifest."""
-    entries = [{"file_path": "traj1.json"}, {"file_path": "traj2.json"}]
+    """Test successful loading of a valid manifest and index mapping."""
+    # seq1 has 2 timesteps, seq2 has 3 timesteps
+    write_trajectory(data_dir, "traj1.json", generate_valid_record("seq1", ["Safe", "Safe"]))
+    write_trajectory(data_dir, "traj2.json", generate_valid_record("seq2", ["Safe", "Safe", "Safe"]))
+    
+    entries = [
+        {"file_path": "traj1.json", "num_timesteps": 2},
+        {"file_path": "traj2.json", "num_timesteps": 3}
+    ]
     write_manifest(data_dir, entries)
+    
     dataset = GraphDataset(root=data_dir)
-    assert len(dataset) == 2
+    assert len(dataset) == 5  # Total frames: 2 + 3 = 5
 
 
 def test_missing_manifest(data_dir):
@@ -84,28 +92,32 @@ def test_empty_dataset(data_dir):
 
 
 def test_indexing_and_graph_generation(data_dir):
-    """Test full pipeline: indexing, loading, and building graphs."""
+    """Test full pipeline: indexing, loading, and building individual graphs."""
     labels = ["Safe", "Congesting"]
     write_trajectory(data_dir, "traj1.json", generate_valid_record("seq1", labels))
-    write_manifest(data_dir, [{"file_path": "traj1.json"}])
+    write_manifest(data_dir, [{"file_path": "traj1.json", "num_timesteps": 2}])
 
-    dataset = GraphDataset(root=data_dir, proximity_radius=0.5)
-    graphs = dataset[0]
-
-    assert isinstance(graphs, list)
-    assert len(graphs) == 2
-    assert isinstance(graphs[0], Data)
+    dataset = GraphDataset(root=data_dir, proximity_radius=2.0)
     
-    # Check graph features
-    assert graphs[0].x.shape == (2, 5)
-    # Check label preservation and mapping
-    assert graphs[0].y.item() == 0  # Safe
-    assert graphs[1].y.item() == 1  # Congesting
+    # Check first frame
+    graph0 = dataset[0]
+    assert isinstance(graph0, Data)
+    assert graph0.x.shape == (2, 5)
+    assert graph0.y.item() == 0  # Safe
+    assert graph0.sequence_id == "seq1"
+    assert graph0.timestep == 0
+
+    # Check second frame
+    graph1 = dataset[1]
+    assert isinstance(graph1, Data)
+    assert graph1.y.item() == 1  # Congesting
+    assert graph1.sequence_id == "seq1"
+    assert graph1.timestep == 1
 
 
 def test_missing_trajectory_file(data_dir):
     """Test error when JSON file referenced in manifest is missing."""
-    write_manifest(data_dir, [{"file_path": "missing.json"}])
+    write_manifest(data_dir, [{"file_path": "missing.json", "num_timesteps": 1}])
     dataset = GraphDataset(root=data_dir)
     with pytest.raises(FileNotFoundError, match="Trajectory JSON missing"):
         _ = dataset[0]
@@ -113,7 +125,7 @@ def test_missing_trajectory_file(data_dir):
 
 def test_corrupted_trajectory_json(data_dir):
     """Test error when trajectory JSON is malformed."""
-    write_manifest(data_dir, [{"file_path": "corrupt.json"}])
+    write_manifest(data_dir, [{"file_path": "corrupt.json", "num_timesteps": 1}])
     with open(os.path.join(data_dir, "corrupt.json"), "w") as f:
         f.write("[corrupted")
         
@@ -127,7 +139,7 @@ def test_invalid_trajectory_schema_missing_key(data_dir):
     record = generate_valid_record("seq1", ["Safe"])
     del record["positions"]
     write_trajectory(data_dir, "traj1.json", record)
-    write_manifest(data_dir, [{"file_path": "traj1.json"}])
+    write_manifest(data_dir, [{"file_path": "traj1.json", "num_timesteps": 1}])
 
     dataset = GraphDataset(root=data_dir)
     with pytest.raises(ValueError, match="Missing required key 'positions'"):
@@ -139,7 +151,7 @@ def test_invalid_trajectory_schema_timestep_mismatch(data_dir):
     record = generate_valid_record("seq1", ["Safe", "Safe"])
     record["positions"] = record["positions"][:1]  # Truncate positions
     write_trajectory(data_dir, "traj1.json", record)
-    write_manifest(data_dir, [{"file_path": "traj1.json"}])
+    write_manifest(data_dir, [{"file_path": "traj1.json", "num_timesteps": 2}])
 
     dataset = GraphDataset(root=data_dir)
     with pytest.raises(ValueError, match="Timestep mismatch"):
@@ -149,7 +161,7 @@ def test_invalid_trajectory_schema_timestep_mismatch(data_dir):
 def test_unknown_risk_label(data_dir):
     """Test error when an unknown risk label is encountered."""
     write_trajectory(data_dir, "traj1.json", generate_valid_record("seq1", ["UnknownLabel"]))
-    write_manifest(data_dir, [{"file_path": "traj1.json"}])
+    write_manifest(data_dir, [{"file_path": "traj1.json", "num_timesteps": 1}])
 
     dataset = GraphDataset(root=data_dir)
     with pytest.raises(ValueError, match="Unknown label 'UnknownLabel'"):
@@ -157,22 +169,41 @@ def test_unknown_risk_label(data_dir):
 
 
 def test_deterministic_ordering(data_dir):
-    """Test that dataset order matches manifest order."""
-    entries = []
-    for i in range(10):
-        filename = f"traj_{i}.json"
-        write_trajectory(data_dir, filename, generate_valid_record(f"seq{i}", ["Safe"]))
-        entries.append({"file_path": filename, "idx": i})
+    """Test that dataset order exactly matches manifest sequence and timestep order."""
+    labels = ["Safe", "Congesting", "Critical"]
     
+    for i, label in enumerate(labels):
+        filename = f"traj_{i}.json"
+        write_trajectory(data_dir, filename, generate_valid_record(f"seq{i}", [label]))
+    
+    entries = [
+        {"file_path": "traj_0.json", "num_timesteps": 1},
+        {"file_path": "traj_1.json", "num_timesteps": 1},
+        {"file_path": "traj_2.json", "num_timesteps": 1},
+    ]
     write_manifest(data_dir, entries)
+    
     dataset = GraphDataset(root=data_dir)
     
-    # Since all trajectories are identical except sequence_id, we can verify
-    # the number of items and assume order matches index requests.
-    assert len(dataset) == 10
+    assert len(dataset) == 3
     
-    # Test random access
-    graphs_3 = dataset[3]
-    graphs_7 = dataset[7]
-    assert len(graphs_3) == 1
-    assert len(graphs_7) == 1
+    # Check that labels match exactly
+    assert dataset[0].y.item() == 0  # Safe
+    assert dataset[1].y.item() == 1  # Congesting
+    assert dataset[2].y.item() == 2  # Critical
+
+
+def test_transform_applied(data_dir):
+    """Test that the transform hook is properly applied."""
+    write_trajectory(data_dir, "traj1.json", generate_valid_record("seq1", ["Safe"]))
+    write_manifest(data_dir, [{"file_path": "traj1.json", "num_timesteps": 1}])
+    
+    def mock_transform(data):
+        data.transformed = True
+        return data
+        
+    dataset = GraphDataset(root=data_dir, transform=mock_transform)
+    graph = dataset[0]
+    
+    assert hasattr(graph, "transformed")
+    assert graph.transformed is True
