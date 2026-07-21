@@ -24,6 +24,7 @@ import torch
 import yaml
 
 from training.evaluate_model import EvaluationEngine, EvaluationResult
+from training.reporting import ReportArtifacts, ReportGenerator
 from training.train_model import Trainer, TrainingHistory, set_random_seed
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class ArtifactManager:
         self.metrics_dir = self.base_dir / "metrics"
         self.metadata_dir = self.base_dir / "metadata"
         self.logs_dir = self.base_dir / "logs"
+        self.reports_dir = self.base_dir / "reports"
         
         self._create_layout()
         
@@ -60,6 +62,7 @@ class ArtifactManager:
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         
     def save_config(self, config: dict[str, Any]) -> None:
         with open(self.config_dir / "snapshot.yaml", "w", encoding="utf-8") as f:
@@ -93,6 +96,7 @@ class ExperimentResult:
     git_commit_hash: str | None
     timestamp: str
     experiment_directory: Path
+    report_artifacts: ReportArtifacts | None = None
 
 
 class ExperimentRunner:
@@ -170,6 +174,21 @@ class ExperimentRunner:
         
         self.artifact_manager.save_evaluation_metrics(evaluation_result)
         
+        # 4. Generate Reports
+        logger.info("Generating evaluation reports...")
+        report_gen = ReportGenerator(
+            self.artifact_manager.reports_dir, self.config["model"]["classes"]
+        )
+        report_meta = {
+            "timestamp": timestamp,
+            "git_commit": commit_hash,
+            "total_training_time": train_time,
+            "evaluation_time": eval_time,
+            "best_checkpoint_path": best_ckpt,
+            "configuration_snapshot": self.config,
+        }
+        report_artifacts = report_gen.generate(evaluation_result, report_meta)
+        
         logger.info("Experiment successfully completed.")
         return ExperimentResult(
             training_history=training_history,
@@ -181,4 +200,5 @@ class ExperimentRunner:
             git_commit_hash=commit_hash,
             timestamp=timestamp,
             experiment_directory=self.experiment_dir,
+            report_artifacts=report_artifacts,
         )
