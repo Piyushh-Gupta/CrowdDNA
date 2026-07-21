@@ -161,6 +161,31 @@ Consequences
 
 ---
 
+# ADR-006
+
+Date:
+2026-07-22
+
+Title:
+Fixed-Length Sequence Assumption for Temporal Encoder
+
+Status:
+Accepted
+
+Decision
+
+The TemporalEncoder and CrowdDNAModel currently assume fixed-length sequences across all trajectories in a batch (e.g., exactly 300 timesteps). Short sequences are zero-padded to `max_seq_len` internally within `CrowdDNAModel.forward()`. The GRU processes the padding tokens without masking or packing. 
+
+Reason
+
+Phase 5 synthetic trajectories are exactly 300 timesteps long. As long as sequences are fixed-length, the zero padding is never practically applied. Deferring packed sequence implementation keeps the current phase simple and focused.
+
+Consequences
+
+When variable-length trajectories are introduced, the zero-padding logic will corrupt the final GRU hidden state for any sequence shorter than `max_seq_len`. This is a known limitation that must be refactored using `torch.nn.utils.rnn.pack_padded_sequence` when variable-length data is supported.
+
+---
+
 # ADR Template
 
 Date:
