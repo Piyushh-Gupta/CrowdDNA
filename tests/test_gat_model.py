@@ -1,3 +1,6 @@
+import logging
+from dataclasses import FrozenInstanceError
+
 import pytest
 import torch
 from torch_geometric.data import Data, Batch
@@ -52,14 +55,23 @@ def test_invalid_configuration():
         CrowdDNAGAT(config)
 
 
+def test_frozen_config_cannot_be_mutated(valid_config):
+    """Test that the configuration cannot be mutated after creation."""
+    with pytest.raises(FrozenInstanceError):
+        valid_config.dropout = 0.5
+
+
 def test_forward_pass_and_shape(valid_config):
     """Test the forward pass on a single graph and verify output shape."""
     model = CrowdDNAGAT(valid_config)
     # 4 nodes, 5 features
     x = torch.randn((4, 5))
-    # 2 edges (bidirectional)
+    # 4 edges (2 bidirectional pairs)
     edge_index = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=torch.long)
-    data = Data(x=x, edge_index=edge_index)
+    # 4 edge attributes, each 4 features
+    edge_attr = torch.randn((4, 4))
+    
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
     out = model(data)
     # Output should be (1 batch, 3 classes)
@@ -73,12 +85,14 @@ def test_batched_graphs(valid_config):
     # Graph 1: 3 nodes
     x1 = torch.randn((3, 5))
     edge_index1 = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
-    data1 = Data(x=x1, edge_index=edge_index1)
+    edge_attr1 = torch.randn((2, 4))
+    data1 = Data(x=x1, edge_index=edge_index1, edge_attr=edge_attr1)
     
     # Graph 2: 2 nodes
     x2 = torch.randn((2, 5))
     edge_index2 = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
-    data2 = Data(x=x2, edge_index=edge_index2)
+    edge_attr2 = torch.randn((2, 4))
+    data2 = Data(x=x2, edge_index=edge_index2, edge_attr=edge_attr2)
     
     batch = Batch.from_data_list([data1, data2])
     out = model(batch)
@@ -87,16 +101,20 @@ def test_batched_graphs(valid_config):
     assert out.shape == (2, 3)
 
 
-def test_empty_graph_handling(valid_config):
-    """Test that the model gracefully handles a graph with zero nodes."""
+def test_empty_graph_handling(valid_config, caplog):
+    """Test that the model gracefully handles a graph with zero nodes and logs a warning."""
     model = CrowdDNAGAT(valid_config)
     x = torch.empty((0, 5))
     edge_index = torch.empty((2, 0), dtype=torch.long)
-    data = Data(x=x, edge_index=edge_index)
+    edge_attr = torch.empty((0, 4))
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
-    out = model(data)
+    with caplog.at_level(logging.WARNING):
+        out = model(data)
+        
     assert out.shape == (1, 3)
     assert torch.allclose(out, torch.zeros((1, 3)))
+    assert "CrowdDNAGAT received an empty graph at inference time" in caplog.text
 
 
 def test_gradient_propagation(valid_config):
@@ -106,7 +124,8 @@ def test_gradient_propagation(valid_config):
     
     x = torch.randn((4, 5))
     edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
-    data = Data(x=x, edge_index=edge_index)
+    edge_attr = torch.randn((2, 4))
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
     out = model(data)
     loss = out.sum()
@@ -125,7 +144,8 @@ def test_deterministic_evaluation_mode(valid_config):
     
     x = torch.randn((4, 5))
     edge_index = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
-    data = Data(x=x, edge_index=edge_index)
+    edge_attr = torch.randn((2, 4))
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
     out1 = model(data)
     out2 = model(data)
@@ -133,27 +153,31 @@ def test_deterministic_evaluation_mode(valid_config):
     assert torch.allclose(out1, out2)
 
 
-def test_train_eval_behaviour(valid_config):
+def test_train_eval_behaviour():
     """Test that train mode produces different outputs due to dropout."""
-    model = CrowdDNAGAT(valid_config)
     # Ensure dropout is high enough to likely cause a difference
-    model.config.dropout = 0.5
+    config = GATConfig(
+        in_channels=5,
+        hidden_channels=64,
+        out_channels=3,
+        num_layers=2,
+        heads=4,
+        dropout=0.5,
+    )
+    model = CrowdDNAGAT(config)
     
-    # For GATConv, dropout is applied during training internally.
-    # We must ensure we test in training mode.
     model.train()
     
     x = torch.randn((4, 5))
     edge_index = torch.tensor([[0, 1, 1, 2], [1, 0, 2, 1]], dtype=torch.long)
-    data = Data(x=x, edge_index=edge_index)
+    edge_attr = torch.randn((4, 4))
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
     
     out1 = model(data)
     out2 = model(data)
     
-    # Since dropout is active, outputs should differ.
-    # Note: this has a very small chance of failing if dropout randomly drops the same nodes,
-    # but with multiple features/heads, it's virtually impossible.
     assert not torch.allclose(out1, out2)
+
 
 def test_config_from_dict():
     """Test loading configuration from a dictionary."""
@@ -174,3 +198,4 @@ def test_config_from_dict():
     assert config.num_layers == 3
     assert config.heads == 8
     assert config.dropout == 0.5
+

@@ -2,6 +2,7 @@
 CrowdFlow DNA — GAT Model
 ==========================
 Module: crowdflow_dna/model/gat_model.py
+Owner: Piyush Gupta (AI & Data Lead)
 
 Implements the Graph Attention Network (GAT) encoder to classify crowd risk
 from PyTorch Geometric Data objects.
@@ -23,7 +24,7 @@ from torch_geometric.nn import GATConv, global_mean_pool
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class GATConfig:
     """Configuration for CrowdDNAGAT."""
     in_channels: int
@@ -77,6 +78,7 @@ class CrowdDNAGAT(Module):
         config.validate()
         self.config = config
 
+        self.drop = torch.nn.Dropout(p=config.dropout)
         self.convs = torch.nn.ModuleList()
 
         if config.num_layers == 1:
@@ -90,6 +92,7 @@ class CrowdDNAGAT(Module):
                     heads=config.heads,
                     concat=False,
                     dropout=config.dropout,
+                    edge_dim=4,
                 )
             )
         else:
@@ -101,6 +104,7 @@ class CrowdDNAGAT(Module):
                     heads=config.heads,
                     concat=True,  # Concatenate attention heads internally
                     dropout=config.dropout,
+                    edge_dim=4,
                 )
             )
             # Middle layers
@@ -112,6 +116,7 @@ class CrowdDNAGAT(Module):
                         heads=config.heads,
                         concat=True,
                         dropout=config.dropout,
+                        edge_dim=4,
                     )
                 )
             # Last layer
@@ -122,6 +127,7 @@ class CrowdDNAGAT(Module):
                     heads=config.heads,
                     concat=False,  # Average the heads for the final hidden state
                     dropout=config.dropout,
+                    edge_dim=4,
                 )
             )
 
@@ -133,27 +139,29 @@ class CrowdDNAGAT(Module):
 
         Args:
             data: PyG Data object containing x (node features), edge_index (COO format),
-                  and batch (node-to-graph mapping for batched inputs).
+                  edge_attr (edge features), and batch (node-to-graph mapping for batched inputs).
 
         Returns:
             Logits of shape (batch_size, out_channels).
+            Zero tensor for empty graphs (0 nodes) representing a uniform prior.
         """
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         
         # Determine batch size dynamically
         batch = data.batch if data.batch is not None else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
         # Handle empty graph
         if x.size(0) == 0:
+            logger.warning("CrowdDNAGAT received an empty graph at inference time.")
             batch_size = int(batch.max().item() + 1) if batch.numel() > 0 else 1
             return torch.zeros((batch_size, self.config.out_channels), device=x.device)
 
         # Apply GAT layers with ELU activations and dropout
         for i, conv in enumerate(self.convs):
-            x = conv(x, edge_index)
+            x = conv(x, edge_index, edge_attr=edge_attr)
             if i < len(self.convs) - 1:
                 x = F.elu(x)
-                x = F.dropout(x, p=self.config.dropout, training=self.training)
+                x = self.drop(x)
 
         # Global average pooling (N, hidden_channels) -> (Batch, hidden_channels)
         x = global_mean_pool(x, batch)
