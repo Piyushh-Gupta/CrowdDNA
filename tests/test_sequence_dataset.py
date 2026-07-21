@@ -1,10 +1,12 @@
 import json
 
+import logging
+
 import pytest
 import torch
 from torch_geometric.data import Data
 
-from crowdflow_dna.graph.sequence_dataset import SequenceGraphDataset
+from crowdflow_dna.graph.sequence_dataset import SequenceGraphDataset, SequenceSample
 
 
 @pytest.fixture
@@ -107,16 +109,17 @@ def test_trajectory_loading_and_graph_creation(mock_trajectory_data):
     dataset = SequenceGraphDataset(mock_trajectory_data, proximity_radius=2.0)
     
     sample = dataset[0]  # traj_1
-    assert "sequence_graphs" in sample
-    assert "sequence_label" in sample
+    assert isinstance(sample, SequenceSample)
+    assert sample.sequence_id == "seq_1"
     
-    graphs = sample["sequence_graphs"]
+    graphs = sample.graphs
     assert len(graphs) == 2  # 2 timesteps
     
-    for t, data in enumerate(graphs):
+    for data in graphs:
         assert isinstance(data, Data)
-        assert data.sequence_id == "seq_1"
-        assert data.timestep == t
+        # metadata is no longer attached directly to Data objects
+        assert not hasattr(data, "sequence_id")
+        assert not hasattr(data, "timestep")
         assert data.x.shape == (2, 5)  # 2 agents, 5 features (dx, dy, x, y, speed)
         # In traj 1, the agents are at [0,0] and [1,1]. Distance is sqrt(2) ~ 1.414 < 2.0
         # GraphBuilder connects neighbors without self-loops by default, yielding 2 directed edges.
@@ -124,16 +127,17 @@ def test_trajectory_loading_and_graph_creation(mock_trajectory_data):
 
 
 def test_sequence_labels(mock_trajectory_data):
-    """Test that the sequence label is correctly assigned from risk_class."""
+    """Test that the sequence label is correctly assigned from risk_class and is a scalar."""
     dataset = SequenceGraphDataset(mock_trajectory_data)
     
     # traj_1 has risk_class = "Safe" (0)
     sample_1 = dataset[0]
-    assert sample_1["sequence_label"].item() == 0
+    assert sample_1.label.item() == 0
+    assert sample_1.label.shape == torch.Size([])  # verify it's a scalar
     
     # traj_2 has risk_class = "Critical" (2)
     sample_2 = dataset[1]
-    assert sample_2["sequence_label"].item() == 2
+    assert sample_2.label.item() == 2
 
 
 def test_fallback_sequence_label(mock_trajectory_data):
@@ -143,7 +147,7 @@ def test_fallback_sequence_label(mock_trajectory_data):
     # traj_3 has no risk_class, frame labels are "Safe" (0) and "Congesting" (1)
     # The max is 1.
     sample_3 = dataset[2]
-    assert sample_3["sequence_label"].item() == 1
+    assert sample_3.label.item() == 1
 
 
 def test_malformed_trajectory(mock_trajectory_data):
@@ -167,7 +171,7 @@ def test_deterministic_ordering(mock_trajectory_data):
     dataset = SequenceGraphDataset(mock_trajectory_data)
     
     # Extract sequence labels from the first three valid sequences
-    labels = [dataset[i]["sequence_label"].item() for i in range(3)]
+    labels = [dataset[i].label.item() for i in range(3)]
     assert labels == [0, 2, 1]
 
 
@@ -197,10 +201,38 @@ def test_repeated_access_consistency(mock_trajectory_data):
     sample_a = dataset[0]
     sample_b = dataset[0]
     
-    assert sample_a["sequence_label"].item() == sample_b["sequence_label"].item()
-    assert len(sample_a["sequence_graphs"]) == len(sample_b["sequence_graphs"])
+    assert sample_a.label.item() == sample_b.label.item()
+    assert len(sample_a.graphs) == len(sample_b.graphs)
     
-    for ga, gb in zip(sample_a["sequence_graphs"], sample_b["sequence_graphs"]):
+    for ga, gb in zip(sample_a.graphs, sample_b.graphs):
         assert torch.allclose(ga.x, gb.x)
         assert torch.allclose(ga.edge_index, gb.edge_index)
-        assert ga.sequence_id == gb.sequence_id
+
+
+def test_missing_sequence_id_warning(tmp_path, caplog):
+    """Test that a warning is emitted if sequence_id is missing and a default is synthesized."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    
+    # Trajectory missing sequence_id
+    traj = {
+        "risk_class": "Safe",
+        "positions": [[[0.0, 0.0]]],
+        "velocities": [[[0.0, 0.0]]],
+        "frame_labels": ["Safe"]
+    }
+    
+    with open(data_dir / "traj_missing_id.json", "w") as f:
+        json.dump(traj, f)
+        
+    manifest = [{"file_path": "traj_missing_id.json", "num_timesteps": 1}]
+    with open(data_dir / "manifest.json", "w") as f:
+        json.dump(manifest, f)
+        
+    dataset = SequenceGraphDataset(str(data_dir))
+    
+    with caplog.at_level(logging.WARNING):
+        sample = dataset[0]
+        
+    assert "has no sequence_id; using default seq_0" in caplog.text
+    assert sample.sequence_id == "seq_0"
