@@ -3,24 +3,38 @@
 Wires all completed pipeline stages end-to-end:
 
     VideoIngestor → Yolov8Detector → ByteTracker
-        → GraphBuilder → model_fn (optional)
+        → GraphBuilder → SequenceBuffer → InferenceRuntime (optional)
         → FrameAnnotator → TimelineBuilder
 
 The pipeline is the single entry point for processing a video file.
 All component logic remains in the respective modules; this module
 contains only orchestration and data-routing code.
+
+When ``model_path`` is provided, the pipeline runs in **inference mode**:
+``SequenceBuffer`` accumulates ``WINDOW_SIZE`` per-frame graphs, then
+``InferenceRuntime.predict()`` produces an ``InferenceResult`` which is
+translated into a ``List[RiskPrediction]`` for the rendering layer.
+
+When ``model_path`` is ``None``, the pipeline operates in **dummy mode**:
+no risk predictions are generated and all bounding boxes are rendered in
+neutral grey. This satisfies the Phase 7/8 Definition of Done.
 """
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
 from crowdflow_dna import config
 from crowdflow_dna.detection.detector import Yolov8Detector
-from crowdflow_dna.errors import CrowdFlowError
+from crowdflow_dna.errors import CrowdFlowError, ModelInferenceError
 from crowdflow_dna.graph.graph_builder import GraphBuilder
+from crowdflow_dna.inference import (
+    InferenceExecutionError,
+    InferenceRuntime,
+    SequenceBuffer,
+)
 from crowdflow_dna.ingestion.video_loader import VideoIngestor
 from crowdflow_dna.rendering.timeline import TimelineBuilder, TimelineEntry
 from crowdflow_dna.rendering.video_renderer import FrameAnnotator
@@ -28,6 +42,12 @@ from crowdflow_dna.schemas import RiskPrediction, TrackItem
 from crowdflow_dna.tracking.tracker import ByteTracker
 
 logger = logging.getLogger(__name__)
+
+# Canonical class index → risk label mapping (must match model training).
+_CLASS_NAMES: List[str] = ["Safe", "Congesting", "Critical"]
+
+# Sequence buffer window size (frames per inference call). See INTEGRATION_CONTRACT.md §6.
+_WINDOW_SIZE: int = 10
 
 
 # ---------------------------------------------------------------------------
@@ -65,37 +85,27 @@ class CrowdFlowPipeline:
     """End-to-end orchestrator for the CrowdFlow DNA vision pipeline.
 
     Connects all completed modules in sequence, routing data between
-    stages according to their published interfaces. No module logic is
-    duplicated here; this class is purely orchestration.
+    stages according to the published interfaces defined in
+    ``docs/INTEGRATION_CONTRACT.md``.
 
-    **Model injection**
+    **Inference mode**
 
-    The GNN/risk-classification model (Phase 4/5, Piyush) is injected as
-    an optional callable. When ``model_fn`` is ``None`` (the default), the
-    pipeline operates in *dummy mode*: no risk predictions are generated and
-    all bounding boxes are rendered in neutral grey. This satisfies the
-    Phase 7/8 Definition of Done — *"Gradio UI built using dummy labels"* —
-    and allows the full pipeline to run without trained model weights.
+    Pass ``model_path`` to load a TorchScript (``.pt``) or ONNX
+    (``.onnx``) model exported by ``ModelExporter``. The pipeline will
+    buffer ``WINDOW_SIZE`` consecutive frames of graph data and invoke
+    ``InferenceRuntime.predict()`` once the buffer is full. Until the buffer
+    warms up (first ``WINDOW_SIZE`` frames), frames are rendered without
+    risk predictions.
 
-    When Piyush's model is available (Phase 9), it is wired in by passing
-    a callable that accepts a ``torch_geometric.data.Data`` graph and returns
-    a ``List[RiskPrediction]``. No changes to this class are required.
+    **Dummy mode**
 
-    **GraphBuilder integration**
-
-    ``GraphBuilder.build()`` requires positions normalised to ``[0, 1]``.
-    Centroids from ``TrackItem`` are normalised by frame width and height.
-    The proximity radius from ``config.PROXIMITY_RADIUS`` (pixels) is
-    similarly normalised before passing to ``GraphBuilder.__init__``.
-    If the normalised radius would exceed ``1.0`` (e.g. on tiny frames),
-    it is clamped to ``1.0`` with a warning.
-
-    Graph construction is skipped when the track list is empty; the model
-    callable is never invoked in that case.
+    When ``model_path`` is ``None`` (the default), the pipeline operates
+    in dummy mode: no risk predictions are generated and all bounding boxes
+    are rendered in neutral grey.
 
     Example usage::
 
-        pipeline = CrowdFlowPipeline()
+        pipeline = CrowdFlowPipeline(model_path="exports/deployment.pt")
         result = pipeline.run("crowd_video.mp4")
         # result.annotated_frames — list of BGR frames
         # result.timeline         — List[TimelineEntry]
@@ -104,33 +114,55 @@ class CrowdFlowPipeline:
 
     def __init__(
         self,
-        model_fn: Optional[Callable[[Any], List[RiskPrediction]]] = None,
+        model_path: Optional[str] = None,
+        model_version: Optional[str] = None,
+        window_size: int = _WINDOW_SIZE,
     ) -> None:
         """Initialise all pipeline components.
 
         Args:
-            model_fn: An optional callable that accepts a
-                ``torch_geometric.data.Data`` graph for a single frame and
-                returns a ``List[RiskPrediction]``. When ``None``, the
-                pipeline runs in dummy mode with no risk predictions.
+            model_path: Path to a ``.pt`` or ``.onnx`` deployment model
+                exported by ``ModelExporter``. When ``None``, the pipeline
+                runs in dummy mode with no risk predictions.
+            model_version: Optional version string forwarded to
+                ``InferenceRuntime.load_model()`` for provenance tracking.
+            window_size: Number of consecutive frames per inference call.
+                Must be ≥ 1. Defaults to ``_WINDOW_SIZE`` (10).
+
+        Raises:
+            ModelNotFoundError: If ``model_path`` is provided but the file
+                does not exist.
+            UnsupportedModelFormatError: If the file extension is not
+                ``.pt`` or ``.onnx``.
+            InferenceExecutionError: If the model file is corrupt or
+                incompatible.
         """
         self._ingestor = VideoIngestor()
         self._detector = Yolov8Detector()
         self._tracker = ByteTracker()
         self._annotator = FrameAnnotator()
         self._timeline = TimelineBuilder()
-        self._model_fn = model_fn
 
-        logger.info(
-            "CrowdFlowPipeline initialised (model_fn=%s)",
-            "provided" if model_fn is not None else "None — dummy mode",
-        )
+        self._runtime: Optional[InferenceRuntime] = None
+        self._seq_buffer: Optional[SequenceBuffer] = None
+
+        if model_path is not None:
+            self._runtime = InferenceRuntime()
+            self._runtime.load_model(model_path, version=model_version)
+            self._seq_buffer = SequenceBuffer(window_size=window_size)
+            logger.info(
+                "CrowdFlowPipeline initialised in inference mode: %s (window=%d)",
+                model_path,
+                window_size,
+            )
+        else:
+            logger.info("CrowdFlowPipeline initialised in dummy mode (no model).")
 
     def run(self, video_path: str) -> PipelineResult:
         """Process a video file end-to-end.
 
         Loads the video, runs detection and tracking on each sampled frame,
-        optionally builds a graph and runs the risk model, annotates frames,
+        optionally buffers graphs and runs the risk model, annotates frames,
         and accumulates a risk timeline.
 
         Args:
@@ -144,7 +176,7 @@ class CrowdFlowPipeline:
             InvalidVideoFormatError: If the video format is unsupported.
             UploadSizeExceededError: If the file exceeds size/duration limits.
             VideoCorruptionError: If the file cannot be opened or read.
-            ModelInferenceError: If detection or tracking raises internally.
+            ModelInferenceError: If the runtime raises during inference.
             CrowdFlowError: For any other unexpected failure inside the loop.
         """
         logger.info("Pipeline starting for: %s", video_path)
@@ -162,14 +194,13 @@ class CrowdFlowPipeline:
         )
 
         if not frames:
-            logger.warning("No frames sampled from %s — returning empty result.", video_path)
+            logger.warning(
+                "No frames sampled from %s — returning empty result.", video_path
+            )
             return PipelineResult(metadata=metadata)
 
         # ----------------------------------------------------------------
         # Stage 2: Build GraphBuilder with normalised proximity radius
-        # Verified from graph_builder.py:
-        #   - proximity_radius must be in (0, 1]
-        #   - config.PROXIMITY_RADIUS is in pixels → must normalise
         # ----------------------------------------------------------------
         width: int = metadata["width"]
         height: int = metadata["height"]
@@ -192,9 +223,12 @@ class CrowdFlowPipeline:
         graph_builder = GraphBuilder(proximity_radius=norm_radius)
 
         # ----------------------------------------------------------------
-        # Stage 3: Reset timeline for this run
+        # Stage 3: Reset stateful components for this run
         # ----------------------------------------------------------------
         self._timeline.reset()
+        if self._seq_buffer is not None:
+            self._seq_buffer.reset()
+
         annotated_frames: List[np.ndarray] = []
 
         # ----------------------------------------------------------------
@@ -253,23 +287,13 @@ class CrowdFlowPipeline:
         # Stage 4b — Tracking
         tracks: List[TrackItem] = self._tracker.update(detections)
 
-        # Stage 4c — Graph + Model (only when tracks exist and model provided)
+        # Stage 4c — Graph construction + buffering + inference
         predictions: List[RiskPrediction] = []
-        if tracks and self._model_fn is not None:
-            positions, velocities = self._extract_arrays(tracks, width, height)
-            try:
-                graph = graph_builder.build(positions, velocities)
-                predictions = self._model_fn(graph)
-            except ImportError:
-                # torch_geometric not installed — skip graph/model silently
-                logger.warning(
-                    "torch_geometric not available; skipping graph/model on frame %d.",
-                    frame_index,
-                )
-            except Exception as exc:
-                raise CrowdFlowError(
-                    f"Graph/model step failed on frame {frame_index}: {exc}"
-                ) from exc
+
+        if self._runtime is not None and self._seq_buffer is not None:
+            predictions = self._run_inference(
+                frame_index, tracks, graph_builder, width, height
+            )
 
         # Stage 4d — Annotation
         annotated = self._annotator.annotate(frame, tracks, predictions)
@@ -283,6 +307,125 @@ class CrowdFlowPipeline:
         )
         return annotated, predictions
 
+    def _run_inference(
+        self,
+        frame_index: int,
+        tracks: List[TrackItem],
+        graph_builder: GraphBuilder,
+        width: int,
+        height: int,
+    ) -> List[RiskPrediction]:
+        """Build a per-frame graph, push it into the buffer, and run inference.
+
+        Args:
+            frame_index: Zero-based frame index for logging.
+            tracks: Active tracks for this frame.
+            graph_builder: Pre-initialised GraphBuilder.
+            width: Frame width in pixels.
+            height: Frame height in pixels.
+
+        Returns:
+            List of ``RiskPrediction`` objects. Empty during warm-up or on
+            inference failure.
+
+        Raises:
+            ModelInferenceError: If the runtime raises a non-recoverable error.
+        """
+        assert self._runtime is not None  # guarded by caller
+        assert self._seq_buffer is not None
+
+        # Build per-frame graph (empty graph when no tracks)
+        try:
+            if tracks:
+                positions, velocities = self._extract_arrays(tracks, width, height)
+                graph = graph_builder.build(positions, velocities)
+            else:
+                # Insert a zero-node placeholder graph (contract §6.4)
+                import torch
+                from torch_geometric.data import Data
+
+                graph = Data(
+                    x=torch.zeros((0, 5), dtype=torch.float32),
+                    edge_index=torch.zeros((2, 0), dtype=torch.long),
+                    edge_attr=torch.zeros((0, 4), dtype=torch.float32),
+                    num_nodes=0,
+                )
+        except ImportError:
+            logger.warning(
+                "torch_geometric not available; skipping graph/inference on frame %d.",
+                frame_index,
+            )
+            return []
+        except Exception as exc:
+            raise CrowdFlowError(
+                f"Graph construction failed on frame {frame_index}: {exc}"
+            ) from exc
+
+        # Push graph into sliding-window buffer
+        self._seq_buffer.push(graph)
+
+        # During warm-up, not enough frames have accumulated yet
+        if not self._seq_buffer.is_ready:
+            logger.debug(
+                "Frame %d: buffer warming up (%d/%d frames).",
+                frame_index,
+                len(self._seq_buffer._buffer),  # noqa: SLF001
+                self._seq_buffer.window_size,
+            )
+            return []
+
+        # Assemble flat-tensor batch from the window
+        tensor_batch = self._seq_buffer.assemble()
+
+        # Invoke InferenceRuntime
+        try:
+            result = self._runtime.predict(
+                tensor_batch.x,
+                tensor_batch.edge_index,
+                tensor_batch.edge_attr,
+                tensor_batch.batch,
+                tensor_batch.seq_lengths,
+            )
+        except InferenceExecutionError as exc:
+            raise ModelInferenceError(
+                f"InferenceRuntime failed on frame {frame_index}: {exc}"
+            ) from exc
+
+        # Translate InferenceResult → RiskPrediction (contract §7)
+        return self._result_to_predictions(result, tracks)
+
+    @staticmethod
+    def _result_to_predictions(
+        result: Any,
+        tracks: List[TrackItem],
+    ) -> List[RiskPrediction]:
+        """Translate an ``InferenceResult`` into scene-level ``RiskPrediction`` objects.
+
+        The current model produces a single scene-level classification. Each
+        active track receives the same risk label (``region_id = track_id``).
+
+        Args:
+            result: An ``InferenceResult`` returned by ``InferenceRuntime``.
+            tracks: Active tracks for this frame.
+
+        Returns:
+            One ``RiskPrediction`` per active track. Empty list if no tracks.
+        """
+        if not tracks:
+            return []
+
+        label = _CLASS_NAMES[result.predicted_class]
+        confidence = result.confidence
+
+        return [
+            RiskPrediction(
+                region_id=t.track_id,
+                label=label,
+                confidence=confidence,
+            )
+            for t in tracks
+        ]
+
     @staticmethod
     def _extract_arrays(
         tracks: List[TrackItem],
@@ -290,14 +433,6 @@ class CrowdFlowPipeline:
         height: int,
     ) -> tuple:
         """Convert TrackItem centroids and velocities to GraphBuilder arrays.
-
-        Verified against graph_builder.py:
-        - positions: shape (N, 2), values normalised to [0, 1]
-          by dividing cx by frame width and cy by frame height.
-        - velocities: shape (N, 2), pixel-per-frame deltas, float32-compatible.
-          GraphBuilder does NOT require normalised velocities — it accepts
-          any float32-compatible values and uses them directly for speed/edge
-          feature computation.
 
         Args:
             tracks: Non-empty list of TrackItem objects for a single frame.

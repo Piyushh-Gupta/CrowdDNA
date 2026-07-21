@@ -2,9 +2,14 @@
 
 Provides an interface to upload a video, run the CrowdFlowPipeline,
 and display the annotated video, risk timeline, and metadata.
+
+Set the ``CROWDDNA_MODEL_PATH`` environment variable to the path of an
+exported ``.pt`` or ``.onnx`` deployment model to enable inference mode.
+When the variable is absent, the pipeline runs in dummy mode.
 """
 
 import logging
+import os
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,11 +18,15 @@ import gradio as gr
 import numpy as np
 
 from crowdflow_dna.errors import CrowdFlowError
+from crowdflow_dna.inference import ModelNotFoundError, UnsupportedModelFormatError
 from crowdflow_dna.pipeline import CrowdFlowPipeline
 from crowdflow_dna.rendering.timeline import TimelineEntry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Optional path to a deployed model. When set, the pipeline runs in inference mode.
+_MODEL_PATH: Optional[str] = os.environ.get("CROWDDNA_MODEL_PATH")
 
 
 def _frames_to_video(frames: List[np.ndarray], fps: float) -> str:
@@ -111,7 +120,18 @@ def process_video(
         return None, [], [], "Please upload a video file."
 
     logger.info("Processing uploaded video: %s", video_file)
-    pipeline = CrowdFlowPipeline(model_fn=None)
+
+    # Attempt to build an inference-mode pipeline when a model path is configured.
+    # Fall back to dummy mode gracefully on any loading error.
+    inference_active = False
+    try:
+        pipeline = CrowdFlowPipeline(model_path=_MODEL_PATH)
+        inference_active = _MODEL_PATH is not None
+    except (ModelNotFoundError, UnsupportedModelFormatError) as exc:
+        logger.warning(
+            "Could not load deployment model (%s). Falling back to dummy mode.", exc
+        )
+        pipeline = CrowdFlowPipeline(model_path=None)
 
     try:
         result = pipeline.run(video_file)
@@ -138,7 +158,10 @@ def process_video(
     timeline_data = _timeline_to_dataframe(result.timeline)
     metadata_data = _metadata_to_rows(result.metadata)
 
-    status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
+    if inference_active:
+        status_msg = f"✅ Analysis complete (inference mode — model: {_MODEL_PATH})."
+    else:
+        status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
     return output_path, timeline_data, metadata_data, status_msg
 
 
