@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 import torch
+import yaml
 
 from crowdflow_dna.model.temporal_encoder import TemporalConfig, TemporalEncoder
 
@@ -60,9 +61,10 @@ def test_invalid_configuration():
 
 
 def test_single_layer_dropout_warning(caplog):
-    """Test that setting dropout > 0 with num_layers=1 emits a warning."""
+    """Test that setting dropout > 0 with num_layers=1 emits a warning during init."""
     with caplog.at_level(logging.WARNING):
         config = TemporalConfig(64, 32, 1, 0.5, False)
+        # Warning should be emitted at model construction, not config validation
         TemporalEncoder(config)
     
     assert "PyTorch GRU ignores dropout for a single layer" in caplog.text
@@ -72,6 +74,28 @@ def test_frozen_config_cannot_be_mutated(valid_config):
     """Test that the configuration cannot be mutated after creation."""
     with pytest.raises(FrozenInstanceError):
         valid_config.dropout = 0.5
+
+
+def test_forward_input_validation(valid_config):
+    """Test that the forward pass validates input shapes and types."""
+    model = TemporalEncoder(valid_config)
+    
+    with pytest.raises(ValueError, match="must be a torch.Tensor"):
+        model([1, 2, 3])
+        
+    with pytest.raises(ValueError, match="expects input of shape"):
+        # 2D tensor instead of 3D
+        model(torch.randn((4, 64)))
+        
+    with pytest.raises(ValueError, match="Batch size must be >= 1"):
+        model(torch.empty((0, 10, 64)))
+        
+    with pytest.raises(ValueError, match="received a sequence of length 0"):
+        model(torch.empty((4, 0, 64)))
+        
+    with pytest.raises(ValueError, match="Expected input_dim"):
+        # Wrong embedding dim
+        model(torch.randn((4, 10, 128)))
 
 
 def test_forward_pass_and_shape(valid_config):
@@ -153,6 +177,7 @@ def test_train_eval_behaviour():
     out1 = model(x)
     out2 = model(x)
     
+    # This test is probabilistic; at dropout=0.8 false equality is vanishingly unlikely.
     assert not torch.allclose(out1, out2)
 
 
@@ -199,3 +224,19 @@ def test_config_from_dict():
     assert config.num_layers == 3
     assert config.dropout == 0.5
     assert config.bidirectional is True
+
+
+def test_config_from_default_yaml():
+    """Test that the TemporalConfig successfully parses default.yaml values."""
+    with open("configs/default.yaml", "r") as f:
+        config_yaml = yaml.safe_load(f)
+        
+    model_config = config_yaml["model"]
+    config = TemporalConfig.from_dict(model_config)
+    
+    # Ensure it parsed correctly (should not fall back to hidden defaults)
+    assert config.input_dim == 64
+    assert config.hidden_dim == 64
+    assert config.num_layers == 2
+    assert config.dropout == 0.0
+    assert config.bidirectional is False

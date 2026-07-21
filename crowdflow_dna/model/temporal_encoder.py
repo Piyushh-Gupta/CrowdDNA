@@ -51,8 +51,6 @@ class TemporalConfig:
             raise ValueError(f"num_layers must be >= 1, got {self.num_layers}")
         if not (0.0 <= self.dropout < 1.0):
             raise ValueError(f"dropout must be in [0.0, 1.0), got {self.dropout}")
-        if self.num_layers == 1 and self.dropout > 0.0:
-            logger.warning("Dropout is > 0 but num_layers is 1. PyTorch GRU ignores dropout for a single layer.")
 
 
 class TemporalEncoder(Module):
@@ -75,6 +73,9 @@ class TemporalEncoder(Module):
         config.validate()
         self.config = config
 
+        if config.num_layers == 1 and config.dropout > 0.0:
+            logger.warning("Dropout is > 0 but num_layers is 1. PyTorch GRU ignores dropout for a single layer.")
+
         self.gru = GRU(
             input_size=config.input_dim,
             hidden_size=config.hidden_dim,
@@ -95,6 +96,21 @@ class TemporalEncoder(Module):
             The final hidden representation of shape (batch_size, temporal_hidden_dim),
             where temporal_hidden_dim is hidden_dim (or hidden_dim * 2 if bidirectional).
         """
+        if not isinstance(x, Tensor):
+            raise ValueError("Input must be a torch.Tensor")
+            
+        if x.ndim != 3:
+            raise ValueError(f"TemporalEncoder expects input of shape (batch, seq_len, input_dim), got {tuple(x.shape)}")
+            
+        if x.size(0) < 1:
+            raise ValueError(f"Batch size must be >= 1, got {x.size(0)}")
+            
+        if x.size(1) == 0:
+            raise ValueError("TemporalEncoder received a sequence of length 0. Filter empty windows before calling forward().")
+            
+        if x.size(2) != self.config.input_dim:
+            raise ValueError(f"Expected input_dim {self.config.input_dim}, got {x.size(2)}")
+            
         # GRU outputs:
         # out: (batch_size, seq_len, num_directions * hidden_size)
         # hn: (num_layers * num_directions, batch_size, hidden_size)
