@@ -186,6 +186,31 @@ When variable-length trajectories are introduced, the zero-padding logic will co
 
 ---
 
+# ADR-007
+
+Date:
+2026-07-22
+
+Title:
+Sequence-Level Dataset Abstraction for Training
+
+Status:
+Accepted
+
+Decision
+
+A dedicated `SequenceGraphDataset` is introduced to become the canonical training dataset. It yields complete trajectories (`List[Data]`) and a single sequence-level label per trajectory. `GraphDataset` will remain unchanged as a frame-level dataset.
+
+Reason
+
+Reconstructing sequences from `GraphDataset` inside a DataLoader (e.g., via a custom `Sampler` and `collate_fn`) forces O(N) redundant disk reads per trajectory because the JSON file is opened and parsed for every single frame. `SequenceGraphDataset` solves this by opening the JSON file exactly once per trajectory. Furthermore, this approach preserves separation of concerns, cleanly supports PyTorch's native `DistributedSampler`, and assigns a robust global label (`risk_class`) to the entire trajectory.
+
+Consequences
+
+The training pipeline will strictly use `SequenceGraphDataset`. Any future frame-level pretraining or inference pipelines can continue to use `GraphDataset` if required.
+
+---
+
 # ADR Template
 
 Date:
