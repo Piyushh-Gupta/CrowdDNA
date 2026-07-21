@@ -72,6 +72,8 @@ class TemporalEncoder(Module):
         super().__init__()
         config.validate()
         self.config = config
+        self.input_dim = config.input_dim
+        self.bidirectional = config.bidirectional
 
         if config.num_layers == 1 and config.dropout > 0.0:
             logger.warning("Dropout is > 0 but num_layers is 1. PyTorch GRU ignores dropout for a single layer.")
@@ -100,7 +102,7 @@ class TemporalEncoder(Module):
             raise ValueError("Input must be a torch.Tensor")
             
         if x.ndim != 3:
-            raise ValueError(f"TemporalEncoder expects input of shape (batch, seq_len, input_dim), got {tuple(x.shape)}")
+            raise ValueError(f"TemporalEncoder expects input of shape (batch, seq_len, input_dim), got {x.shape}")
             
         if x.size(0) < 1:
             raise ValueError(f"Batch size must be >= 1, got {x.size(0)}")
@@ -108,15 +110,15 @@ class TemporalEncoder(Module):
         if x.size(1) == 0:
             raise ValueError("TemporalEncoder received a sequence of length 0. Filter empty windows before calling forward().")
             
-        if x.size(2) != self.config.input_dim:
-            raise ValueError(f"Expected input_dim {self.config.input_dim}, got {x.size(2)}")
+        if x.size(2) != self.input_dim:
+            raise ValueError(f"Expected input_dim {self.input_dim}, got {x.size(2)}")
             
         # GRU outputs:
         # out: (batch_size, seq_len, num_directions * hidden_size)
         # hn: (num_layers * num_directions, batch_size, hidden_size)
         _, hn = self.gru(x)
 
-        if self.config.bidirectional:
+        if self.bidirectional:
             # For bidirectional GRU, hn contains forward and backward states interleaved by layer.
             # The final layer's forward state is hn[-2] and backward state is hn[-1].
             hidden_forward = hn[-2]
