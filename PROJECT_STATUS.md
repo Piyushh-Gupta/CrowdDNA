@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Phase 5 — Synthetic Data Generation
+Phase 8 — Graph Attention Network (GAT)
 
 ---
 
@@ -23,6 +23,11 @@ Core Modules
 - ScenarioFactory
 - SimulationRunner
 - AutoLabeler
+- DatasetSerializer
+- generate_dataset()
+- GraphBuilder
+- GraphDataset
+- CrowdDNAGAT (GAT Model)
 
 ---
 
@@ -34,15 +39,7 @@ None
 
 # Next
 
-DatasetSerializer
-
-↓
-
-generate_dataset()
-
-↓
-
-Integration Testing
+Phase 9 — Temporal Encoder (GRU) and Training Loop
 
 ---
 
