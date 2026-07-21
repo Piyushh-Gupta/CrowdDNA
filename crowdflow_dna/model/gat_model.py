@@ -77,6 +77,7 @@ class CrowdDNAGAT(Module):
         super().__init__()
         config.validate()
         self.config = config
+        self.hidden_channels = config.hidden_channels
 
         self.drop = torch.nn.Dropout(p=config.dropout)
         self.convs = torch.nn.ModuleList()
@@ -134,6 +135,37 @@ class CrowdDNAGAT(Module):
         # Final MLP classifier head
         self.classifier = Linear(config.hidden_channels, config.out_channels)
 
+    def extract_features_from_tensors(
+        self, x: Tensor, edge_index: Tensor, edge_attr: Tensor, batch: Tensor
+    ) -> Tensor:
+        """Extracts graph embeddings directly from raw tensors.
+
+        Args:
+            x: Node features of shape (num_nodes, num_node_features).
+            edge_index: COO format edges of shape (2, num_edges).
+            edge_attr: Edge features of shape (num_edges, num_edge_features).
+            batch: Node-to-graph mapping of shape (num_nodes,).
+
+        Returns:
+            Embeddings of shape (batch_size, hidden_channels).
+            Zero tensor for empty graphs.
+        """
+        if x.size(0) == 0:
+            if not torch.jit.is_scripting():
+                logger.warning("CrowdDNAGAT received an empty graph at inference time.")
+            batch_size = int(batch.max().item() + 1) if batch.numel() > 0 else 1
+            return torch.zeros((batch_size, self.hidden_channels), device=x.device)
+
+        for i, conv in enumerate(self.convs):
+            x = conv(x, edge_index, edge_attr=edge_attr)
+            if i < len(self.convs) - 1:
+                x = F.elu(x)
+                x = self.drop(x)
+
+        x = global_mean_pool(x, batch)
+        return x
+
+    @torch.jit.unused
     def extract_features(self, data: Data) -> Tensor:
         """Extracts graph embeddings using the GAT layers (without classifier head).
 
@@ -143,32 +175,15 @@ class CrowdDNAGAT(Module):
 
         Returns:
             Embeddings of shape (batch_size, hidden_channels).
-            Zero tensor for empty graphs (0 nodes).
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
         
         # Determine batch size dynamically
         batch = data.batch if data.batch is not None else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+        
+        return self.extract_features_from_tensors(x, edge_index, edge_attr, batch)
 
-        # Handle empty graph
-        if x.size(0) == 0:
-            # This guard applies primarily when CrowdDNAGAT is used standalone.
-            # CrowdDNAModel validates non-empty sequences before calling extract_features.
-            logger.warning("CrowdDNAGAT received an empty graph at inference time.")
-            batch_size = int(batch.max().item() + 1) if batch.numel() > 0 else 1
-            return torch.zeros((batch_size, self.config.hidden_channels), device=x.device)
-
-        # Apply GAT layers with ELU activations and dropout
-        for i, conv in enumerate(self.convs):
-            x = conv(x, edge_index, edge_attr=edge_attr)
-            if i < len(self.convs) - 1:
-                x = F.elu(x)
-                x = self.drop(x)
-
-        # Global average pooling (N, hidden_channels) -> (Batch, hidden_channels)
-        x = global_mean_pool(x, batch)
-        return x
-
+    @torch.jit.unused
     def forward(self, data: Data) -> Tensor:
         """Forward pass of the GAT model including the classifier head.
 
