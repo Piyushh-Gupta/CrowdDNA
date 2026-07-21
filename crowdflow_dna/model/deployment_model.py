@@ -92,26 +92,33 @@ class CrowdDNADeploymentModel(Module):
         )
 
         # 2. Reshape into padded temporal sequences
+        # We perform vectorized padding without loops or scatter to guarantee ONNX traceability
         batch_size = seq_lengths.size(0)
+        max_seq_len = int(seq_lengths.max().item())
         
-        # We need max_seq_len natively without Python max() for ONNX/TorchScript
-        # if seq_lengths is a tensor, we can use torch.max
-        max_seq_len = int(torch.max(seq_lengths).item())
-        embedding_dim = graph_embeddings.size(-1)
-
-        padded_sequences = torch.zeros(
-            (batch_size, max_seq_len, embedding_dim),
-            device=graph_embeddings.device,
-            dtype=graph_embeddings.dtype
-        )
-
-        # TorchScript loops require explicit types and indices
-        start_idx = 0
-        for b_idx in range(batch_size):
-            seq_len = int(seq_lengths[b_idx].item())
-            end_idx = start_idx + seq_len
-            padded_sequences[b_idx, :seq_len, :] = graph_embeddings[start_idx:end_idx]
-            start_idx = end_idx
+        # Calculate start index for each sequence in the batch
+        if batch_size == 1:
+            cumsum_lens = torch.zeros(1, device=seq_lengths.device, dtype=seq_lengths.dtype)
+        else:
+            cumsum_lens = torch.cat([
+                torch.zeros(1, device=seq_lengths.device, dtype=seq_lengths.dtype), 
+                seq_lengths[:-1].cumsum(0)
+            ])
+            
+        range_tensor = torch.arange(max_seq_len, device=seq_lengths.device)
+        
+        # Build index grid of shape (batch_size, max_seq_len)
+        indices = cumsum_lens.unsqueeze(1) + range_tensor.unsqueeze(0)
+        valid_mask = range_tensor.unsqueeze(0) < seq_lengths.unsqueeze(1)
+        
+        # Point invalid sequence steps to a dummy zero-vector at the end of graph_embeddings
+        dummy_idx = graph_embeddings.size(0)
+        indices = torch.where(valid_mask, indices, torch.full_like(indices, dummy_idx))
+        
+        zero_vec = torch.zeros((1, graph_embeddings.size(1)), device=graph_embeddings.device, dtype=graph_embeddings.dtype)
+        graph_embeddings_padded = torch.cat([graph_embeddings, zero_vec], dim=0)
+        
+        padded_sequences = graph_embeddings_padded[indices]
 
         # 3. TemporalEncoder: Graph embeddings -> Temporal representation
         # shape: (batch_size, temporal_hidden_dim)
