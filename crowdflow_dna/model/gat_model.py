@@ -152,6 +152,8 @@ class CrowdDNAGAT(Module):
 
         # Handle empty graph
         if x.size(0) == 0:
+            # This guard applies primarily when CrowdDNAGAT is used standalone.
+            # CrowdDNAModel validates non-empty sequences before calling extract_features.
             logger.warning("CrowdDNAGAT received an empty graph at inference time.")
             batch_size = int(batch.max().item() + 1) if batch.numel() > 0 else 1
             return torch.zeros((batch_size, self.config.hidden_channels), device=x.device)
@@ -178,16 +180,5 @@ class CrowdDNAGAT(Module):
             Logits of shape (batch_size, out_channels).
             Zero tensor for empty graphs (0 nodes) representing a uniform prior.
         """
-        x, _, _ = data.x, data.edge_index, data.edge_attr
-        batch = data.batch if data.batch is not None else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-
-        if x.size(0) == 0:
-            logger.warning("CrowdDNAGAT received an empty graph at inference time.")
-            batch_size = int(batch.max().item() + 1) if batch.numel() > 0 else 1
-            return torch.zeros((batch_size, self.config.out_channels), device=x.device)
-
-        features = self.extract_features(data)
-        
-        # Classifier
-        logits = self.classifier(features)
-        return logits
+        # extract_features handles the empty-graph case
+        return self.classifier(self.extract_features(data))

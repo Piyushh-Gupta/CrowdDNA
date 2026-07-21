@@ -1,6 +1,6 @@
 import pytest
 import torch
-from torch_geometric.data import Batch, Data
+from torch_geometric.data import Data
 
 from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfig
 from crowdflow_dna.model.gat_model import GATConfig
@@ -102,16 +102,7 @@ def test_forward_pass_list_of_lists(valid_model_config, dummy_sequence_batch):
     assert out.shape == (2, 3)  # (batch_size=2 sequences, num_classes=3)
 
 
-def test_forward_pass_list_of_batches(valid_model_config, dummy_sequence_batch):
-    """Test forward pass using a list of Batch objects (one Batch per sequence)."""
-    model = CrowdDNAModel(valid_model_config)
-    
-    # Convert inner lists to PyG Batch objects
-    batch_seq1 = Batch.from_data_list(dummy_sequence_batch[0])
-    batch_seq2 = Batch.from_data_list(dummy_sequence_batch[1])
-    
-    out = model([batch_seq1, batch_seq2])
-    assert out.shape == (2, 3)
+
 
 
 def test_forward_empty_input(valid_model_config):

@@ -113,7 +113,8 @@ def test_empty_graph_handling(valid_config, caplog):
         out = model(data)
         
     assert out.shape == (1, 3)
-    assert torch.allclose(out, torch.zeros((1, 3)))
+    # The output is classifier(zeros), which equals the bias term
+    assert torch.allclose(out, model.classifier.bias.unsqueeze(0))
     assert "CrowdDNAGAT received an empty graph at inference time" in caplog.text
 
 

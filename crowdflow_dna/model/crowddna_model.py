@@ -6,6 +6,13 @@ Owner: Piyush Gupta (AI & Data Lead)
 
 Implements the unified end-to-end model composing the Graph Attention Network
 and Temporal Encoder into a single trainable module.
+
+NOTE: This model currently assumes fixed-length sequences (e.g., all trajectories
+in a batch have exactly 300 timesteps). It pads sequences with zeros before passing
+them to the Temporal Encoder. When variable-length trajectories are introduced,
+this padding logic will corrupt the GRU hidden state for shorter sequences. This
+is a known limitation and will require packed sequences (e.g.,
+torch.nn.utils.rnn.pack_padded_sequence) in the future.
 """
 
 from __future__ import annotations
@@ -90,14 +97,15 @@ class CrowdDNAModel(Module):
             
         self.classifier = Linear(temporal_out_dim, config.num_classes)
 
-    def forward(self, sequences: list[list[Data]] | list[Batch]) -> Tensor:
+    def forward(self, sequences: list[list[Data]]) -> Tensor:
         """
         Forward pass of the end-to-end model.
 
         Args:
             sequences: A list of sequences. Each sequence represents one trajectory 
-                       sample and can be a list of PyG Data objects (one per frame) 
-                       or a single PyG Batch grouping the frames sequentially.
+                       sample as a list of PyG Data objects (one per frame).
+                       The DataLoader collate_fn should reconstruct sequences.
+                       This model does not support pre-batched inner sequences.
 
         Returns:
             Logits of shape (batch_size, num_classes).
@@ -110,18 +118,12 @@ class CrowdDNAModel(Module):
         seq_lengths = []
         
         for seq in sequences:
-            if isinstance(seq, list):
-                if not seq:
-                    raise ValueError("Encountered an empty sequence in the batch.")
-                flat_graphs.extend(seq)
-                seq_lengths.append(len(seq))
-            elif isinstance(seq, Batch):
-                if seq.num_graphs == 0:
-                    raise ValueError("Encountered an empty Batch sequence in the batch.")
-                flat_graphs.extend(seq.to_data_list())
-                seq_lengths.append(seq.num_graphs)
-            else:
-                raise TypeError(f"Expected list of list[Data] or list[Batch], got list[{type(seq).__name__}]")
+            if not isinstance(seq, list):
+                raise TypeError(f"Expected list of list[Data], got list[{type(seq).__name__}]")
+            if not seq:
+                raise ValueError("Encountered an empty sequence in the batch.")
+            flat_graphs.extend(seq)
+            seq_lengths.append(len(seq))
                 
         # Batch all graphs across all sequences and timesteps for efficient GAT processing
         giant_batch = Batch.from_data_list(flat_graphs)
