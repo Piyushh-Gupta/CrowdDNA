@@ -129,3 +129,64 @@ def test_deployment_torchscript_scriptable(model_config, sample_data):
         )
         
     assert torch.allclose(orig_out, scripted_out, atol=1e-6)
+
+def test_deployment_strict_state_dict_loading():
+    """
+    Verifies that a checkpoint trained on an arbitrary architecture loads into
+    the deployment model with zero missing and zero unexpected keys, provided
+    the deployment model is initialized with the config stored in the checkpoint.
+    """
+    # 1. Custom arbitrary config (different from defaults)
+    custom_config = CrowdDNAModelConfig(
+        gat_config=GATConfig(
+            in_channels=3,
+            hidden_channels=256,
+            out_channels=5,
+            num_layers=4,
+            heads=8,
+            dropout=0.1
+        ),
+        temporal_config=TemporalConfig(
+            input_dim=256,
+            hidden_dim=128,
+            num_layers=3,
+            dropout=0.2,
+            bidirectional=True
+        ),
+        num_classes=5
+    )
+    
+    # 2. Train model creates weights
+    train_model = CrowdDNAModel(custom_config)
+    
+    # 3. Simulate checkpoint saving (YAML config format)
+    mock_yaml_config = {
+        "input_dim": 3,
+        "gnn_hidden_dim": 256,
+        "classes": ["A", "B", "C", "D", "E"],
+        "num_gnn_layers": 4,
+        "gnn_heads": 8,
+        "dropout": 0.1,
+        "gru_hidden_dim": 128,
+        "gru_num_layers": 3,
+        "gru_dropout": 0.2,
+        "gru_bidirectional": True
+    }
+    
+    mock_checkpoint = {
+        "model_state": train_model.state_dict(),
+        "config": {"model": mock_yaml_config}
+    }
+    
+    # 4. Simulation of ModelExporter loading the checkpoint
+    chkpt_config = mock_checkpoint["config"]
+    model_config_dict = chkpt_config.get("model", chkpt_config)
+    extracted_config = CrowdDNAModelConfig.from_dict(model_config_dict)
+    deploy_model = CrowdDNADeploymentModel(extracted_config)
+    
+    # 5. Load state dict strictly (default is strict=True)
+    incompatible_keys = deploy_model.load_state_dict(mock_checkpoint["model_state"], strict=True)
+    
+    # 6. Assert zero missing and zero unexpected keys
+    assert len(incompatible_keys.missing_keys) == 0, f"Missing keys found: {incompatible_keys.missing_keys}"
+    assert len(incompatible_keys.unexpected_keys) == 0, f"Unexpected keys found: {incompatible_keys.unexpected_keys}"

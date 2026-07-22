@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-07-22T18:14:52Z",
+  "git_commit": "6fdc5b0558c9bd9fe4483be0cb7d63b4d764d531",
+  "checkpoint": "experiments\\runs\\baseline_20260722_230537\\checkpoints\\best.pt",
+  "export_method": "torch.jit.script",
+  "opset_version": 17,
+  "tolerance": 1e-05,
+  "validation_status": "SUCCESS",
+  "maximum_output_difference": 0.0
+}
