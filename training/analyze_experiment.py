@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -33,7 +35,6 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -413,6 +414,7 @@ def analyze_experiment(exp_dir: Path) -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="Analyze CrowdDNA Experiment")
     parser.add_argument("--experiment_dir", type=str, required=True, help="Path to experiment directory")
     args = parser.parse_args()
