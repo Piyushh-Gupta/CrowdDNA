@@ -3,9 +3,12 @@ Tests for the generalized experiment analysis framework.
 """
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from training.analyze_experiment import analyze_experiment
 
