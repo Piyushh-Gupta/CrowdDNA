@@ -158,7 +158,7 @@ class CheckpointManager:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Checkpoint not found at {path}")
             
-        state = torch.load(path, map_location="cpu")
+        state = torch.load(path, map_location="cpu", weights_only=False)
         model.load_state_dict(state["model_state"])
         
         if optimizer and "optimizer_state" in state:
@@ -277,6 +277,15 @@ class Trainer:
             preds = logits.argmax(dim=-1)
             correct = (preds == labels).sum().item()
             self.metrics_tracker.update(loss.item(), correct, labels.size(0))
+            
+        if torch.cuda.is_available():
+            peak_alloc = torch.cuda.max_memory_allocated() / (1024**3)
+            peak_reserv = torch.cuda.max_memory_reserved() / (1024**3)
+            import logging
+            logging.getLogger(__name__).info(
+                f"Peak VRAM Allocated: {peak_alloc:.2f} GB | Peak VRAM Reserved: {peak_reserv:.2f} GB"
+            )
+            torch.cuda.reset_peak_memory_stats()
             
         return self.metrics_tracker.compute()
         

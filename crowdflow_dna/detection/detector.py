@@ -9,6 +9,7 @@ import logging
 from typing import List, Tuple
 
 import numpy as np
+import torch
 from ultralytics import YOLO
 
 from crowdflow_dna import config
@@ -63,12 +64,24 @@ class Yolov8Detector:
         """
         self._confidence_threshold: float = float(config.CONFIDENCE_THRESHOLD)
 
+        # PyTorch defaults to weights_only=True which breaks older YOLO weights.
+        # We temporarily wrap torch.load to force weights_only=False.
+        _original_load = torch.load
+        
+        def _safe_load(*args, **kwargs):
+            if "weights_only" not in kwargs:
+                kwargs["weights_only"] = False
+            return _original_load(*args, **kwargs)
+
         try:
+            torch.load = _safe_load
             self._model: YOLO = YOLO(model_path)
         except Exception as exc:
             raise ModelInferenceError(
                 f"Failed to load YOLO model from '{model_path}': {exc}"
             ) from exc
+        finally:
+            torch.load = _original_load
 
         logger.info("Yolov8Detector initialised with model: %s", model_path)
 

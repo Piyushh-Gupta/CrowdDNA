@@ -131,7 +131,7 @@ def test_checkpoint_loading(mock_dataset_and_config):
     engine.load_checkpoint(latest_path)
     
     # Verify weight restoration (the checkpoint saved them prior to addition)
-    loaded_state = torch.load(latest_path)
+    loaded_state = torch.load(latest_path, weights_only=False)
     for name, param in engine.model.named_parameters():
         assert torch.allclose(param, loaded_state["model_state"][name])
 

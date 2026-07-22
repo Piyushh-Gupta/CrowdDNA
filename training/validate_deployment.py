@@ -137,7 +137,7 @@ def main() -> None:
         }
         
         # Load the PyTorch model to get the parameter count
-        checkpoint = torch.load(args.checkpoint, map_location="cpu")
+        checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
         state_dict = checkpoint.get("model_state", checkpoint)
         parameter_count = sum(t.numel() for t in state_dict.values())
         deployment_stats["parameter_count"] = parameter_count

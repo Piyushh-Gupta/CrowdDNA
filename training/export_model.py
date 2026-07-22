@@ -66,7 +66,8 @@ class ModelExporter:
         self.tolerance = tolerance
 
         self.export_dir.mkdir(parents=True, exist_ok=True)
-        self.config = CrowdDNAModelConfig.from_dict(self.config_dict)
+        model_cfg = self.config_dict.get("model", self.config_dict)
+        self.config = CrowdDNAModelConfig.from_dict(model_cfg)
 
     def _get_dummy_inputs(self, batch_size: int = 2, seq_len: int = 5, num_nodes: int = 10, num_edges: int = 20) -> Tuple[torch.Tensor, ...]:
         """Generates realistic flat tensor dummy inputs for tracing and ONNX export."""
@@ -104,11 +105,20 @@ class ModelExporter:
         """Executes the export and validation pipeline."""
         logger.info(f"Loading checkpoint from {self.checkpoint_path}")
         
+        # Load weights and extract precise training config
+        checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
+        
+        if "config" in checkpoint:
+            logger.info("Overriding config with exact configuration stored in checkpoint.")
+            chkpt_config = checkpoint["config"]
+            model_config_dict = chkpt_config.get("model", chkpt_config)
+            self.config = CrowdDNAModelConfig.from_dict(model_config_dict)
+        else:
+            logger.warning("Checkpoint does not contain 'config'. Using fallback config_dict.")
+        
         # Initialize deployment model
         deploy_model = CrowdDNADeploymentModel(self.config)
         
-        # Load weights
-        checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
         # Ensure we're loading only the 'model_state' mapping
         state_dict = checkpoint["model_state"] if "model_state" in checkpoint else checkpoint
         
