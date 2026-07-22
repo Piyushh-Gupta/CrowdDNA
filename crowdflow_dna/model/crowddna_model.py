@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 import torch
+import torch.utils.checkpoint
 from torch import Tensor
 from torch.nn import Linear, Module
 from torch_geometric.data import Batch, Data
@@ -142,8 +143,21 @@ class CrowdDNAModel(Module):
         
         for b_idx, seq in enumerate(sequences):
             seq_batch = Batch.from_data_list(seq)
-            # shape: (seq_len, gat_hidden_dim)
-            seq_embeddings = self.gat.extract_features(seq_batch)
+            # Use gradient checkpointing to prevent accumulating 8GB of GAT intermediate tensors.
+            # This recomputes the forward pass during backward(), saving ~7.5GB of VRAM.
+            if self.training:
+                # Force requires_grad=True on the input tensor to activate PyTorch's gradient
+                # checkpointing engine. By default, dataset inputs have requires_grad=False,
+                # which causes PyTorch to completely bypass the checkpointing mechanism.
+                # This input tensor is ephemeral (not in the optimizer), so it will not cause
+                # unintended parameter updates, and its gradients are freed after backward().
+                seq_batch.x.requires_grad_(True)
+                seq_embeddings = torch.utils.checkpoint.checkpoint(
+                    self.gat.extract_features, seq_batch, use_reentrant=False
+                )
+            else:
+                seq_embeddings = self.gat.extract_features(seq_batch)
+                
             padded_sequences[b_idx, :len(seq), :] = seq_embeddings
             
         # 3. TemporalEncoder: Graph embeddings -> Temporal representation
