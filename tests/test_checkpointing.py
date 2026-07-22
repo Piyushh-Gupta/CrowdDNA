@@ -1,6 +1,5 @@
-import pytest
 import torch
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from torch_geometric.data import Data
 from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfig
 
@@ -49,7 +48,7 @@ def test_gradient_checkpointing_active():
         return original_extract(batch)
     
     # 3. Patch the method and execute forward and backward passes
-    with patch.object(model.gat, 'extract_features', side_effect=spy_extract) as mock_extract:
+    with patch.object(model.gat, 'extract_features', side_effect=spy_extract):
         # Forward pass
         logits = model(sequences)
         
