@@ -278,6 +278,15 @@ class Trainer:
             correct = (preds == labels).sum().item()
             self.metrics_tracker.update(loss.item(), correct, labels.size(0))
             
+        if torch.cuda.is_available():
+            peak_alloc = torch.cuda.max_memory_allocated() / (1024**3)
+            peak_reserv = torch.cuda.max_memory_reserved() / (1024**3)
+            import logging
+            logging.getLogger(__name__).info(
+                f"Peak VRAM Allocated: {peak_alloc:.2f} GB | Peak VRAM Reserved: {peak_reserv:.2f} GB"
+            )
+            torch.cuda.reset_peak_memory_stats()
+            
         return self.metrics_tracker.compute()
         
     def _validate_epoch(self) -> dict[str, float]:
