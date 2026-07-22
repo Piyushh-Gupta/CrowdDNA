@@ -76,7 +76,13 @@ class DatasetValidator:
             except json.JSONDecodeError as e:
                 raise ValueError(f"Malformed manifest JSON: {e}")
                 
-        records = manifest.get("records", [])
+        if isinstance(manifest, list):
+            records = manifest
+        elif isinstance(manifest, dict):
+            records = manifest.get("records", [])
+        else:
+            raise ValueError(f"Manifest must be a list or a dictionary, got {type(manifest).__name__}")
+            
         if not records:
             logger.warning("Manifest contains no records.")
             
@@ -89,7 +95,9 @@ class DatasetValidator:
                 raise ValueError(f"Duplicate sequence_id in manifest: {seq_id}")
             self.sequence_ids.add(seq_id)
             
-            file_path = self.data_dir / f"{seq_id}.json"
+            relative_path = rec.get("file_path", f"{seq_id}.json")
+            file_path = self.data_dir / relative_path
+            
             if not file_path.exists():
                 raise FileNotFoundError(f"Missing sequence file: {file_path}")
                 
