@@ -159,7 +159,12 @@ def process_video(
     metadata_data = _metadata_to_rows(result.metadata)
 
     if inference_active:
-        status_msg = f"✅ Analysis complete (inference mode — model: {model_path})."
+        backend = result.metadata.get("backend", "TorchScript")
+        fmt = result.metadata.get("model_format", "unknown")
+        version = result.metadata.get("model_version") or "unversioned"
+        status_msg = (
+            f"✅ Analysis complete — inference mode · {backend} ({fmt}) · version: {version}."
+        )
     else:
         status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
     return output_path, timeline_data, metadata_data, status_msg
