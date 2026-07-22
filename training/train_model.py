@@ -158,7 +158,7 @@ class CheckpointManager:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"Checkpoint not found at {path}")
             
-        state = torch.load(path, map_location="cpu")
+        state = torch.load(path, map_location="cpu", weights_only=False)
         model.load_state_dict(state["model_state"])
         
         if optimizer and "optimizer_state" in state:

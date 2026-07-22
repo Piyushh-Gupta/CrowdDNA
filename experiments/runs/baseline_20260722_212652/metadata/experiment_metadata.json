@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-07-22T15:56:52.900860+00:00",
+  "git_commit": "80145d91c4a0a3b88fcb26b16a293625bb68e772",
+  "random_seed": 42,
+  "configuration_snapshot": {
+    "simulation": {
+      "output_dir": "data/simulated"
+    },
+    "model": {
+      "gnn_hidden_dim": 128,
+      "gru_hidden_dim": 64,
+      "gru_num_layers": 2,
+      "gru_dropout": 0.1,
+      "gru_bidirectional": true,
+      "num_gnn_layers": 2,
+      "classes": [
+        "Safe",
+        "Congesting",
+        "Critical"
+      ]
+    },
+    "training": {
+      "batch_size": 16,
+      "num_epochs": 50,
+      "learning_rate": 0.001,
+      "validation_split": 0.2,
+      "checkpoint_dir": "C:\\Users\\piyus\\Downloads\\CrowdDNA\\experiments\\runs\\baseline_20260722_212652\\checkpoints",
+      "random_seed": 42,
+      "deterministic": true
+    }
+  }
+}
