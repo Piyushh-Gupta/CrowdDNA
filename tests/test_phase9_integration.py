@@ -41,7 +41,7 @@ from crowdflow_dna.inference import (
     SequenceBuffer,
     TensorBatch,
 )
-from crowdflow_dna.pipeline import CrowdFlowPipeline, PipelineResult
+from crowdflow_dna.pipeline import CrowdFlowPipeline
 from crowdflow_dna.schemas import TrackItem
 
 
