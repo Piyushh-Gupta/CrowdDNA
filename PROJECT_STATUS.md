@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Phase 8 — Graph Attention Network (GAT)
+Phase 12C — Repository Hardening
 
 ---
 
@@ -28,18 +28,26 @@ Core Modules
 - GraphBuilder
 - GraphDataset
 - CrowdDNAGAT (GAT Model)
+- TemporalEncoder (GRU Model)
+- CrowdDNAModel (Full Architecture)
+- Training Loop & Checkpointing
+- Model Exporter (TorchScript & ONNX)
+- Inference Runtime (Backend Abstraction)
+- SequenceBuffer
+- Pipeline Integration
+- App integration (Gradio)
 
 ---
 
 # In Progress
 
-None
+Repository Hardening (Code Quality, Audits, Cleanup)
 
 ---
 
 # Next
 
-Phase 9 — Temporal Encoder (GRU) and Training Loop
+Phase 13 — Open Source Release
 
 ---
 

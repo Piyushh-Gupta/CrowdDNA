@@ -32,7 +32,11 @@ class TemporalConfig:
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> TemporalConfig:
-        """Parses configuration from a dictionary."""
+        """Parses configuration from a dictionary.
+        
+        Note: Reads `gnn_hidden_dim` to populate `input_dim` since the TemporalEncoder
+        receives the GAT's output embeddings as its input.
+        """
         return cls(
             input_dim=int(config_dict.get("gnn_hidden_dim", 64)),
             hidden_dim=int(config_dict.get("gru_hidden_dim", 64)),

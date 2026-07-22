@@ -1,3 +1,16 @@
+"""
+CrowdFlow DNA — Inference Pipeline Configuration
+
+Architectural Note:
+This configuration module governs the inference pipeline, which operates in
+2D image space (pixels). Constants like PROXIMITY_RADIUS are in pixel units
+because the pipeline lacks camera calibration.
+
+This is intentionally separate from `configs/default.yaml`, which governs
+the training simulation space where coordinates are physical (metres).
+Do not collapse this boundary.
+"""
+
 # Video Ingestion
 MAX_FILE_SIZE_MB = 200
 MAX_DURATION_SECONDS = 300

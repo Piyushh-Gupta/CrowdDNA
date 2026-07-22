@@ -21,6 +21,7 @@ import torch
 
 from crowdflow_dna.model.crowddna_model import CrowdDNAModelConfig
 from crowdflow_dna.model.deployment_model import CrowdDNADeploymentModel
+from training.utils import _get_git_commit
 
 logger = logging.getLogger(__name__)
 
@@ -125,16 +126,22 @@ class ModelExporter:
         export_method = "unknown"
         
         try:
-            logger.info("Attempting TorchScript scripting...")
-            ts_model = torch.jit.script(deploy_model)
-            export_method = "torch.jit.script"
+            try:
+                logger.info("Attempting TorchScript scripting...")
+                ts_model = torch.jit.script(deploy_model)
+                export_method = "torch.jit.script"
+            except Exception as e:
+                logger.warning(f"Scripting failed: {e}. Falling back to tracing...")
+                ts_model = torch.jit.trace(deploy_model, dummy_inputs)
+                export_method = "torch.jit.trace"
+                
+            torch.jit.save(ts_model, str(ts_path))
+            logger.info(f"Saved TorchScript to {ts_path}")
         except Exception as e:
-            logger.warning(f"Scripting failed: {e}. Falling back to tracing...")
-            ts_model = torch.jit.trace(deploy_model, dummy_inputs)
-            export_method = "torch.jit.trace"
-            
-        torch.jit.save(ts_model, str(ts_path))
-        logger.info(f"Saved TorchScript to {ts_path}")
+            logger.error(f"TorchScript export completely failed: {e}")
+            ts_path = None
+            ts_model = None
+            export_method = "failed"
 
         # 2. ONNX Export
         onnx_path = self.export_dir / "crowddna.onnx"
@@ -177,7 +184,7 @@ class ModelExporter:
         # 4. Metadata
         metadata = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "git_commit": self._get_git_commit(),
+            "git_commit": _get_git_commit() or "unknown",
             "checkpoint": str(self.checkpoint_path),
             "export_method": export_method,
             "opset_version": self.opset_version,
@@ -203,16 +210,21 @@ class ModelExporter:
     def _validate(
         self,
         pt_model: torch.nn.Module,
-        ts_model: torch.jit.ScriptModule,
+        ts_model: Optional[torch.jit.ScriptModule],
         onnx_path: str,
         dummy_inputs: Tuple[torch.Tensor, ...]
     ) -> float:
         """Runs numerical validation comparing PyTorch, TorchScript, and ONNX outputs."""
         with torch.no_grad():
             pt_out = pt_model(*dummy_inputs).numpy()
-            ts_out = ts_model(*dummy_inputs).numpy()
             
-        max_diff = float(np.max(np.abs(pt_out - ts_out)))
+        max_diff = 0.0
+        if ts_model is not None:
+            with torch.no_grad():
+                ts_out = ts_model(*dummy_inputs).numpy()
+            max_diff = float(np.max(np.abs(pt_out - ts_out)))
+        else:
+            logger.warning("TorchScript model not available. Skipping TorchScript validation.")
         
         if onnx_path is None:
             logger.warning("ONNX model not exported. Skipping ONNX validation.")
@@ -240,16 +252,4 @@ class ModelExporter:
             
         return max_diff
 
-    def _get_git_commit(self) -> str:
-        """Fetches current git commit, fails gracefully."""
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"], 
-                capture_output=True, 
-                text=True, 
-                check=True
-            )
-            return result.stdout.strip()
-        except Exception:
-            return "unknown"
+

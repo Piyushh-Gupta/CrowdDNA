@@ -31,6 +31,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from torch_geometric.data import Data
 
 logger = logging.getLogger("crowdflow.graph_builder")
 
@@ -117,13 +118,7 @@ class GraphBuilder:
                 or do not have exactly 2 columns.
             ImportError: If ``torch_geometric`` is not installed.
         """
-        try:
-            from torch_geometric.data import Data
-        except ImportError as exc:
-            raise ImportError(
-                "torch_geometric is required for GraphBuilder. "
-                "Install it with: pip install torch-geometric"
-            ) from exc
+
 
         positions = np.asarray(positions, dtype=np.float32)
         velocities = np.asarray(velocities, dtype=np.float32)

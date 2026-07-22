@@ -1,57 +1,49 @@
 # CrowdDNA Roadmap
 
-## Phase 5
-
+## Phase 5 (Completed)
 ✅ TrajectoryRecord
-
 ✅ ScenarioFactory
-
 ✅ SimulationRunner
-
 ✅ AutoLabeler
-
-⬜ DatasetSerializer
-
-⬜ generate_dataset()
-
-⬜ Integration Tests
+✅ DatasetSerializer
+✅ generate_dataset()
+✅ Integration Tests
 
 ---
 
-## Phase 6
-
-Graph Builder
-
-Graph Dataset
-
-PyTorch Geometric Integration
+## Phase 6 (Completed)
+✅ Graph Builder
+✅ Graph Dataset
+✅ PyTorch Geometric Integration
 
 ---
 
-## Phase 7
-
-Graph Attention Network
-
-Temporal Encoder
-
-Risk Prediction Model
+## Phase 7 & 8 (Completed)
+✅ Graph Attention Network (GAT)
+✅ Temporal Encoder (GRU)
+✅ Risk Prediction Architecture (CrowdDNAModel)
 
 ---
 
-## Phase 8
-
-Training Pipeline
-
-Evaluation
-
-Hyperparameter Search
+## Phase 9 & 10 (Completed)
+✅ Training Pipeline
+✅ Evaluation Framework
+✅ Hyperparameter / Experiment Workflow
 
 ---
 
-## Phase 9
+## Phase 11 (Completed)
+✅ Model Export (TorchScript & ONNX)
+✅ Inference Runtime Abstraction (ONNXBackend, TorchScriptBackend)
 
-Inference
+---
 
-Dashboard
+## Phase 12 (Completed)
+✅ Inference Pipeline Integration (SequenceBuffer)
+✅ Real-time App Integration (app.py)
 
-Deployment
+---
+
+## Phase 13 (Next)
+⬜ Open Source Release
+⬜ Repository Hardening (Phase 12C - In Progress)

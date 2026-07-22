@@ -20,20 +20,22 @@ import torch
 from torch import Tensor
 import torch.nn.functional as F
 
+from crowdflow_dna.errors import CrowdFlowError
+
 logger = logging.getLogger(__name__)
 
 
-class ModelNotFoundError(Exception):
+class ModelNotFoundError(CrowdFlowError):
     """Raised when the specified model path does not exist."""
     pass
 
 
-class UnsupportedModelFormatError(Exception):
+class UnsupportedModelFormatError(CrowdFlowError):
     """Raised when the model format is unknown or unsupported."""
     pass
 
 
-class InferenceExecutionError(Exception):
+class InferenceExecutionError(CrowdFlowError):
     """Raised when model prediction fails."""
     pass
 
@@ -204,7 +206,8 @@ class InferenceRuntime:
         seq_lengths: Tensor
     ) -> InferenceResult:
         """
-        Performs a single inference execution pass on the first sequence in the batch.
+        Performs a single inference execution pass on a single-sequence batch.
+        If a larger batch is provided, it returns the result only for the first sequence.
         
         Args:
             x: Node features.

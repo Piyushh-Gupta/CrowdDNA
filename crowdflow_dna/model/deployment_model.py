@@ -16,6 +16,8 @@ from torch import Tensor
 from torch.nn import Module
 
 from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfig
+from crowdflow_dna.model.gat_model import CrowdDNAGAT
+from crowdflow_dna.model.temporal_encoder import TemporalEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +38,6 @@ class CrowdDNADeploymentModel(Module):
         super().__init__()
         self.config = config
         
-        # Instantiate subcomponents directly to avoid TorchScript compiling CrowdDNAModel's Python list forward pass.
-        from crowdflow_dna.model.gat_model import CrowdDNAGAT
-        from crowdflow_dna.model.temporal_encoder import TemporalEncoder
         
         self.gat = CrowdDNAGAT(config.gat_config)
         self.temporal_encoder = TemporalEncoder(config.temporal_config)
