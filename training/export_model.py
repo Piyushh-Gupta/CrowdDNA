@@ -108,7 +108,7 @@ class ModelExporter:
         deploy_model = CrowdDNADeploymentModel(self.config)
         
         # Load weights
-        checkpoint = torch.load(self.checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
         # Ensure we're loading only the 'model_state' mapping
         state_dict = checkpoint["model_state"] if "model_state" in checkpoint else checkpoint
         

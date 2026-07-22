@@ -114,40 +114,37 @@ class CrowdDNAModel(Module):
             raise ValueError("CrowdDNAModel received an empty batch of sequences.")
             
         # Determine sequence batching strategy and extract lengths
-        flat_graphs = []
         seq_lengths = []
-        
         for seq in sequences:
             if not isinstance(seq, list):
                 raise TypeError(f"Expected list of list[Data], got list[{type(seq).__name__}]")
             if not seq:
                 raise ValueError("Encountered an empty sequence in the batch.")
-            flat_graphs.extend(seq)
             seq_lengths.append(len(seq))
                 
-        # Batch all graphs across all sequences and timesteps for efficient GAT processing
-        giant_batch = Batch.from_data_list(flat_graphs)
-        
-        # 1. GAT: Graph sequence -> Graph embeddings
-        # shape: (total_frames, gat_hidden_dim)
-        graph_embeddings = self.gat.extract_features(giant_batch)
-        
-        # 2. Reshape into padded temporal sequences
+        # 1. GAT & 2. Reshape into padded temporal sequences
+        # We process each sequence individually to prevent graph batching explosion.
+        # Batching all 16x300 frames (4800 graphs, 1.9M edges) into one giant GAT pass
+        # causes PyTorch to allocate massive intermediate tensors (>2GB) for attention,
+        # leading to OOM during the backward pass.
         batch_size = len(sequences)
         max_seq_len = max(seq_lengths)
-        embedding_dim = graph_embeddings.size(-1)
+        embedding_dim = self.config.gat_config.hidden_channels
+        
+        # Use device from first graph
+        device = sequences[0][0].x.device
         
         padded_sequences = torch.zeros(
             (batch_size, max_seq_len, embedding_dim), 
-            device=graph_embeddings.device,
-            dtype=graph_embeddings.dtype
+            device=device,
+            dtype=torch.float32
         )
         
-        start_idx = 0
-        for b_idx, seq_len in enumerate(seq_lengths):
-            end_idx = start_idx + seq_len
-            padded_sequences[b_idx, :seq_len, :] = graph_embeddings[start_idx:end_idx]
-            start_idx = end_idx
+        for b_idx, seq in enumerate(sequences):
+            seq_batch = Batch.from_data_list(seq)
+            # shape: (seq_len, gat_hidden_dim)
+            seq_embeddings = self.gat.extract_features(seq_batch)
+            padded_sequences[b_idx, :len(seq), :] = seq_embeddings
             
         # 3. TemporalEncoder: Graph embeddings -> Temporal representation
         # shape: (batch_size, temporal_hidden_dim)

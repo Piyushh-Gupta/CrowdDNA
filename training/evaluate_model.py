@@ -98,7 +98,7 @@ class EvaluationEngine:
         
     def load_checkpoint(self, checkpoint_path: str) -> None:
         """Restores model weights."""
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         state_dict = checkpoint["model_state"] if "model_state" in checkpoint else checkpoint
         self.model.load_state_dict(state_dict)
         logger.info(f"Loaded checkpoint from {checkpoint_path}")
@@ -109,7 +109,7 @@ class EvaluationEngine:
             raise ValueError("Dataset is empty. Cannot evaluate.")
             
         model_device = next(self.model.parameters()).device
-        if model_device != self.device:
+        if model_device.type != torch.device(self.device).type:
             raise ValueError(
                 f"Device mismatch: Model is on {model_device} but engine expects {self.device}"
             )
