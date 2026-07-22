@@ -55,7 +55,7 @@ simulation:
 
   # Directory where JSON trajectory files and manifest.json are written.
   # Relative paths are resolved from the repository root.
-  output_dir: "data/synthetic"
+  output_dir: "data/simulated"
 
 training:
   batch_size: 4
