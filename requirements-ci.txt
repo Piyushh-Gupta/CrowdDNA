@@ -1,8 +1,5 @@
 # CI / Testing Dependencies
-# Lightweight subset of requirements.txt for fast GitHub Actions runs.
-# Packages are added here as the corresponding phase is implemented and merged.
-# Heavy training-only packages (torch-geometric, onnx, onnxruntime, gradio)
-# are excluded until Phase 5-8 code lands.
+# Full environment required for CI tests, linting, and artifact generation.
 
 numpy==1.26.4
 pyyaml>=6.0
@@ -12,10 +9,11 @@ networkx==3.2.1
 torch==2.2.1
 ultralytics==8.1.29
 gradio==4.21.0
-huggingface-hub<0.24.0  # Required by gradio 4.21.0
+huggingface-hub<0.24.0
 torch-geometric==2.5.0
+scikit-learn==1.4.1.post1
+matplotlib==3.8.3
 
 # Testing & Linting
 pytest==8.0.2
 ruff==0.3.2
-

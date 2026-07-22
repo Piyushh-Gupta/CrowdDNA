@@ -12,34 +12,23 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 import yaml
 
 from training.evaluate_model import EvaluationEngine, EvaluationResult
 from training.reporting import ReportArtifacts, ReportGenerator
 from training.train_model import Trainer, TrainingHistory, set_random_seed
+from training.utils import NumpyEncoder, _get_git_commit
 
 logger = logging.getLogger(__name__)
 
 
-class NumpyEncoder(json.JSONEncoder):
-    """Encodes numpy arrays and scalars into JSON-serializable formats."""
-    def default(self, o: Any) -> Any:
-        if isinstance(o, np.ndarray):
-            return o.tolist()
-        if isinstance(o, (np.float32, np.float64)):
-            return float(o)
-        if isinstance(o, (np.int32, np.int64)):
-            return int(o)
-        return super().default(o)
 
 
 class ArtifactManager:
@@ -69,13 +58,10 @@ class ArtifactManager:
             yaml.dump(config, f)
             
     def save_training_history(self, history: TrainingHistory) -> None:
-        # TODO: Learning curves extension point
         with open(self.metrics_dir / "training_history.json", "w", encoding="utf-8") as f:
             json.dump(dataclasses.asdict(history), f, cls=NumpyEncoder, indent=2)
             
     def save_evaluation_metrics(self, result: EvaluationResult) -> None:
-        # TODO: ROC curves extension point
-        # TODO: PR curves extension point
         with open(self.metrics_dir / "evaluation_metrics.json", "w", encoding="utf-8") as f:
             json.dump(dataclasses.asdict(result), f, cls=NumpyEncoder, indent=2)
             
@@ -121,16 +107,7 @@ class ExperimentRunner:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
     def _get_git_commit(self) -> str | None:
-        try:
-            res = subprocess.run(
-                ["git", "rev-parse", "HEAD"], 
-                capture_output=True, 
-                text=True, 
-                check=True
-            )
-            return res.stdout.strip()
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return None
+        return _get_git_commit()
             
     def run(self) -> ExperimentResult:
         logger.info(f"Starting experiment in {self.experiment_dir}")
@@ -160,8 +137,6 @@ class ExperimentRunner:
         self.artifact_manager.save_training_history(training_history)
         
         best_ckpt = str(self.artifact_manager.checkpoints_dir / "best.pt")
-        
-        # TODO: ONNX export extension point
         
         # 3. Evaluation Phase
         logger.info("Initializing Evaluation Engine...")

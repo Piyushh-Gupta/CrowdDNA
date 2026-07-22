@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from crowdflow_dna.model.crowddna_model import CrowdDNAModel
+from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfig
 from training.run_experiment import ExperimentRunner
 
 logging.basicConfig(
@@ -55,7 +55,7 @@ def main() -> int:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f)
                 
-            model = CrowdDNAModel(cfg["model"])
+            model = CrowdDNAModel(CrowdDNAModelConfig.from_dict(cfg["model"]))
             total_params = sum(p.numel() for p in model.parameters())
             trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
             

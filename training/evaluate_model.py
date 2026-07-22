@@ -9,7 +9,6 @@ Implements a comprehensive evaluation framework for trained CrowdDNA models.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,7 +19,7 @@ from torch.utils.data import DataLoader
 
 from crowdflow_dna.graph.sequence_dataset import SequenceGraphDataset
 from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfig
-from training.train_model import CheckpointManager, sequence_collate_fn
+from training.train_model import sequence_collate_fn
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +97,10 @@ class EvaluationEngine:
         self.metrics_computer = MetricsComputer(self.num_classes)
         
     def load_checkpoint(self, checkpoint_path: str) -> None:
-        """Restores model weights using the CheckpointManager."""
-        checkpoint_dir = os.path.dirname(checkpoint_path)
-        manager = CheckpointManager(checkpoint_dir)
-        # We only need the model state for evaluation
-        manager.load(checkpoint_path, self.model)
+        """Restores model weights."""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        state_dict = checkpoint["model_state"] if "model_state" in checkpoint else checkpoint
+        self.model.load_state_dict(state_dict)
         logger.info(f"Loaded checkpoint from {checkpoint_path}")
         
     def evaluate(self, dataset: SequenceGraphDataset, batch_size: int = 4) -> EvaluationResult:

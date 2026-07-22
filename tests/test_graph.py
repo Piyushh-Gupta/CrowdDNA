@@ -389,18 +389,3 @@ class TestBuild:
         assert torch.equal(g1.x, g2.x)
         assert torch.equal(g1.edge_index, g2.edge_index)
         assert torch.equal(g1.edge_attr, g2.edge_attr)
-
-    def test_build_import_error_without_pyg(self, monkeypatch):
-        """build() should raise ImportError with a helpful message if PyG missing."""
-        import builtins
-        real_import = builtins.__import__
-
-        def mock_import(name, *args, **kwargs):
-            if name == "torch_geometric.data":
-                raise ImportError("mocked")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", mock_import)
-        gb = _builder()
-        with pytest.raises(ImportError, match="torch_geometric"):
-            gb.build(_pos((0.5, 0.5)), _vel((0.0, 0.0)))

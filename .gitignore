@@ -47,6 +47,7 @@ outputs/
 *.pt
 *.pth
 *.onnx
+commit_history.txt
 
 # Jupyter
 .ipynb_checkpoints

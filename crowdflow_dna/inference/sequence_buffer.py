@@ -150,13 +150,13 @@ class SequenceBuffer:
                 x_parts.append(_EMPTY_NODE_X)
 
             # -- Edge indices with global offset -----------------------
-            if data.edge_index.shape[1] > 0:
+            if getattr(data, "edge_index", None) is not None and data.edge_index.shape[1] > 0:
                 edge_index_parts.append(data.edge_index + cumulative_offset)
             else:
                 edge_index_parts.append(_EMPTY_EDGE_INDEX)
 
             # -- Edge attributes ---------------------------------------
-            if data.edge_attr.shape[0] > 0:
+            if getattr(data, "edge_attr", None) is not None and data.edge_attr.shape[0] > 0:
                 edge_attr_parts.append(data.edge_attr.float())
             else:
                 edge_attr_parts.append(_EMPTY_EDGE_ATTR)
