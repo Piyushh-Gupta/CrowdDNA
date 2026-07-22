@@ -262,6 +262,12 @@ class CrowdFlowPipeline:
                     f"Unexpected error on frame {frame_index}: {exc}"
                 ) from exc
 
+        # Augment metadata with runtime provenance (contract §7 / Phase 9).
+        if self._runtime is not None:
+            metadata["backend"] = self._runtime.backend_name
+            metadata["model_format"] = self._runtime.model_format
+            metadata["model_version"] = self._runtime.model_version
+
         result = PipelineResult(
             annotated_frames=annotated_frames,
             timeline=self._timeline.get_timeline(),
