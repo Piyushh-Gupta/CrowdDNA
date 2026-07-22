@@ -28,28 +28,29 @@
 
 ## 1. Component Ownership
 
-### Deployment Subsystem (Piyush — ML & Data Lead)
+### ML Subsystem (Piyush)
 
 | Module | Path | Responsibility |
 |---|---|---|
-| `CrowdDNADeploymentModel` | `crowdflow_dna/model/deployment_model.py` | Pure-tensor forward pass for inference. Owned entirely by deployment. Do not modify without deployment team approval. |
-| `ModelExporter` / `ExportResult` | `training/export_model.py` | Serialises the trained model to TorchScript (`.pt`) and ONNX (`.onnx`). Produces `metadata.json`. Runs offline, not at pipeline startup. |
-| `InferenceRuntime` | `crowdflow_dna/inference/runtime.py` | Loads exported models, routes to `TorchScriptBackend` or `ONNXBackend`, times inference, returns `InferenceResult`. This is the **sole integration surface** exposed to the pipeline team. |
-| `InferenceBackend` (ABC) | `crowdflow_dna/inference/runtime.py` | Pluggable backend interface. Pipeline team must never interact with backends directly. |
+| `CrowdDNADeploymentModel` | `crowdflow_dna/model/deployment_model.py` | Pure-tensor forward pass for inference. Owned entirely by ML subsystem. |
+| `ModelExporter` / `ExportResult` | `training/export_model.py` | Serialises the trained model to TorchScript (`.pt`) and ONNX (`.onnx`). Produces `metadata.json`. Runs offline. |
+| `InferenceRuntime` | `crowdflow_dna/inference/runtime.py` | Loads exported models, routes to `TorchScriptBackend` or `ONNXBackend`, times inference, returns `InferenceResult`. |
+| `InferenceBackend` (ABC) | `crowdflow_dna/inference/runtime.py` | Pluggable backend interface. |
+| `SequenceBuffer` | `crowdflow_dna/inference/sequence_buffer.py` | Sliding-window buffer that assembles continuous temporal graph sequences into batch tensors. |
+| `GraphBuilder` | `crowdflow_dna/graph/graph_builder.py` | Converts `TrackItem` lists into per-frame `torch_geometric.data.Data` graphs. |
 | `InferenceResult` | `crowdflow_dna/inference/runtime.py` | Canonical result dataclass. Shared across both teams — treat as immutable public API. |
 
-### Inference Pipeline (Aayushi — Pipeline Lead)
+### Application Layer (Aayushi)
 
 | Module | Path | Responsibility |
 |---|---|---|
-| `CrowdFlowPipeline` | `crowdflow_dna/pipeline.py` | Orchestrates all stages end-to-end. Owns the `model_fn` injection point. |
+| `CrowdFlowPipeline` | `crowdflow_dna/pipeline.py` | Orchestrates all stages end-to-end. Owns the inference lifecycle (`SequenceBuffer` & `InferenceRuntime`). |
 | `VideoIngestor` | `crowdflow_dna/ingestion/video_loader.py` | Decodes video frames at `FRAME_SAMPLE_RATE`. |
 | `Yolov8Detector` | `crowdflow_dna/detection/detector.py` | Detects pedestrians per frame; produces `Detection` objects. |
 | `ByteTracker` | `crowdflow_dna/tracking/tracker.py` | Assigns track IDs and estimates velocity; produces `TrackItem` objects. |
-| `GraphBuilder` | `crowdflow_dna/graph/graph_builder.py` | Converts `TrackItem` lists into per-frame `torch_geometric.data.Data` graphs. |
 | `FrameAnnotator` | `crowdflow_dna/rendering/video_renderer.py` | Draws bounding boxes and risk labels onto frames. Accepts `List[RiskPrediction]`. |
 | `TimelineBuilder` | `crowdflow_dna/rendering/timeline.py` | Accumulates per-frame predictions into a `List[TimelineEntry]`. |
-| `app.py` | `app.py` | Gradio UI; calls `CrowdFlowPipeline` with `model_fn=None` today. |
+| `app.py` | `app.py` | Gradio UI; configures `CrowdFlowPipeline` via `CROWDDNA_MODEL_PATH` environment variable. |
 
 ### Shared Schemas (Neutral — neither team modifies without consensus)
 
@@ -61,7 +62,22 @@
 
 ---
 
-## 2. End-to-End Deployment Flow
+### Offline Deployment Flow
+
+```
+best.pt (Training Checkpoint)
+        │
+        ▼  [Export & Validation]
+training.validate_deployment
+        │
+        ▼
+deployment.pt (TorchScript Artifact)
+        │
+        ▼
+InferenceRuntime.load_model()
+```
+
+### Real-Time Inference Flow
 
 The complete data path from raw video to annotated output is:
 
@@ -88,7 +104,7 @@ GraphBuilder.build(positions, velocities)
       edge_index: (2, E) long       # COO proximity edges
       edge_attr:  (E, 4) float32    # [dx, dy, distance, relative_speed]
         │
-        ▼  [Stage 5 — Sequence Buffering  ← NEW INTEGRATION WORK]
+        ▼  [Stage 5 — Sequence Buffering]
 SequenceBuffer.push(graph)          # per-track-session window management
   → when buffer is full:
       x:          (total_nodes, 5)  # flat-concatenated across W frames
@@ -131,7 +147,8 @@ app.py / Gradio Blocks
 
 ### Current Pipeline State
 
-`CrowdFlowPipeline.__init__` currently accepts `model_fn: Optional[Callable]`. It is wired as `model_fn=None` in `app.py`, running in **dummy mode**. The integration work connects Stage 5 (buffering) and Stage 6 (runtime) by providing a real `model_fn` closure wrapping `InferenceRuntime.predict`.
+`CrowdFlowPipeline.__init__` accepts `model_path: str | Path | None` and fully owns the lifecycle of `SequenceBuffer` and `InferenceRuntime`. This improves encapsulation while preserving the external inference contract. 
+`app.py` reads `CROWDDNA_MODEL_PATH` from the environment. If the variable exists and loading succeeds, it runs in **inference mode**. If it is missing or loading fails, it gracefully falls back to **dummy mode**.
 
 ---
 
@@ -549,11 +566,9 @@ The `InferenceBackend` abstract class is the primary extension mechanism. Adding
 
 `GraphBuilder` was built before the deployment model existed and is used by the training pipeline which *does* use PyG natively. Changing its output format would break the training pipeline. The correct solution is the **buffering adapter layer** (§6) that the pipeline team implements, which converts `Data` objects into the flat tensors required by the runtime.
 
-### Why is `model_fn` a `Callable` in `CrowdFlowPipeline`?
+### Why does `CrowdFlowPipeline` directly encapsulate the inference lifecycle?
 
-The existing pipeline uses duck typing for the model injection point (`Optional[Callable[[Any], List[RiskPrediction]]]`). This was the right design decision — it decouples the pipeline from the deployment subsystem entirely and allows the model to be swapped without changing any pipeline code. The integration simply wraps `InferenceRuntime.predict()` inside a closure that matches this signature.
-
----
+The pipeline directly accepts `model_path` and completely owns the instantiation and lifecycle of both `SequenceBuffer` and `InferenceRuntime`. This replaces the older `model_fn` callable injection pattern. This design provides superior encapsulation because it guarantees that buffer resets, error mapping (`ModelInferenceError`), and configuration (`CROWDDNA_MODEL_PATH`) are handled uniformly within the pipeline boundary rather than leaking into the Gradio UI layer (`app.py`).
 
 ## 12. Assumptions
 
@@ -600,7 +615,7 @@ The following order minimises integration risk and allows independent developmen
 
 3. **[Pipeline team]** Write an integration smoke test that loads the `.pt` file, passes a synthetic 5-tensor tuple of the correct shapes, and asserts `InferenceResult.predicted_class in {0, 1, 2}`.
 
-4. **[Pipeline team]** Wire `InferenceRuntime` into `CrowdFlowPipeline` via a `model_fn` closure. Replace `model_fn=None` in `app.py` with the real model function.
+4. **[Pipeline team]** Wire `InferenceRuntime` into `CrowdFlowPipeline` directly. Replace dummy mode initialization in `app.py` with `CROWDDNA_MODEL_PATH` configuration.
 
 5. **[Both teams]** End-to-end test on a short video clip. Measure `InferenceResult.inference_time_ms` over 30+ frames. Verify it is within the 35 ms budget.
 
