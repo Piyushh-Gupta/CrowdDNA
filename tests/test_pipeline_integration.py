@@ -141,12 +141,12 @@ class TestSequenceBuffer:
     def test_empty_frame_handled_gracefully(self):
         buf = SequenceBuffer(window_size=3)
         buf.push(_make_data(n_nodes=3, n_edges=2))
-        buf.push(_empty_data())               # zero-node frame
+        buf.push(_empty_data())               # zero-node frame -> gets 1 dummy node
         buf.push(_make_data(n_nodes=2, n_edges=2))
         assert buf.is_ready
 
         tb = buf.assemble()
-        assert tb.x.shape == (5, 5)           # only 3+2=5 real nodes
+        assert tb.x.shape == (6, 5)           # 3 + 1(dummy) + 2 = 6 nodes
         assert tb.seq_lengths.tolist() == [3]  # still 3 frames
 
     def test_all_empty_frames(self):
@@ -155,10 +155,10 @@ class TestSequenceBuffer:
         buf.push(_empty_data())
         tb = buf.assemble()
 
-        assert tb.x.shape == (0, 5)
+        assert tb.x.shape == (2, 5)           # 2 dummy nodes
         assert tb.edge_index.shape == (2, 0)
         assert tb.edge_attr.shape == (0, 4)
-        assert tb.batch.shape == (0,)
+        assert tb.batch.shape == (2,)         # 2 items in batch
         assert tb.seq_lengths.tolist() == [2]
 
     def test_reset_clears_buffer(self):

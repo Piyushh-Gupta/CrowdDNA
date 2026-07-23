@@ -143,11 +143,16 @@ class SequenceBuffer:
         for frame_idx, data in enumerate(self._buffer):
             n: int = int(data.num_nodes) if data.num_nodes is not None else 0
 
-            # -- Node features -----------------------------------------
+            # -- Node features and batch assignments --------------------
             if n > 0:
                 x_parts.append(data.x.float())
+                batch_parts.append(torch.full((n,), frame_idx, dtype=torch.int64))
             else:
-                x_parts.append(_EMPTY_NODE_X)
+                # Add a dummy zero node to represent the empty frame.
+                # This ensures batch tensor has elements up to window_size - 1,
+                # preventing TorchScript out-of-bounds indices in TemporalEncoder.
+                x_parts.append(torch.zeros((1, _NODE_FEATURE_DIM), dtype=torch.float32))
+                batch_parts.append(torch.full((1,), frame_idx, dtype=torch.int64))
 
             # -- Edge indices with global offset -----------------------
             if getattr(data, "edge_index", None) is not None and data.edge_index.shape[1] > 0:
@@ -161,13 +166,7 @@ class SequenceBuffer:
             else:
                 edge_attr_parts.append(_EMPTY_EDGE_ATTR)
 
-            # -- Batch vector (node → frame index) ---------------------
-            if n > 0:
-                batch_parts.append(
-                    torch.full((n,), frame_idx, dtype=torch.long)
-                )
-
-            cumulative_offset += n
+            cumulative_offset += max(n, 1)
 
         x = torch.cat(x_parts, dim=0)
         edge_index = torch.cat(edge_index_parts, dim=1)

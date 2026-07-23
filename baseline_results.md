@@ -61,7 +61,7 @@ All future phases must use these metrics as the baseline for performance and acc
 - **ONNX Size**: 0.0 MB
 
 ### Inference Latency (Batch Size = 1)
-- **TorchScript via InferenceRuntime**: 4.14 ms
+- **TorchScript via InferenceRuntime**: 3.75 ms
 - **ONNX via InferenceRuntime**: 0.0 ms
 
 ---

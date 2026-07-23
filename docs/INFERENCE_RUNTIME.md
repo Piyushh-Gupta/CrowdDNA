@@ -50,3 +50,20 @@ Since the runtime bypasses PyTorch Geometric `Data` objects entirely to maintain
 - `edge_attr`: Edge features `(total_edges, num_edge_features)`
 - `batch`: Node-to-graph assignment mapping `(total_nodes,)`
 - `seq_lengths`: Length of each temporal trajectory sequence `(batch_size,)`
+
+## SequenceBuffer Edge Cases (Empty Frames)
+
+The inference pipeline's `SequenceBuffer` is responsible for concatenating multiple temporal graph frames into a unified `TensorBatch`.
+
+When processing video streams, it is common to encounter empty frames (e.g., frames with zero detected people). If an empty frame contains zero nodes, PyTorch Geometric's downstream spatial pooling functions (like `global_mean_pool`) can lose track of the original sequence length because `global_mean_pool` defaults its dimensionality to `batch.max() + 1`. This leads to a dimension mismatch between the expected `sum(seq_lengths)` and the pooled node embeddings, causing a fatal out-of-bounds segfault inside the exported TorchScript C++ runtime.
+
+To guarantee that the runtime receives structurally valid tensors:
+1. `SequenceBuffer` intercepts any frame containing `0` nodes.
+2. It transparently inserts a **dummy node** (`[0.0, 0.0, 0.0, ...]` across all node feature dimensions) for that frame.
+3. This dummy node is registered in the `batch` tensor.
+
+**Why does this not change model outputs?**
+By inserting an all-zeros dummy node with no edges, the `GATConv` layers pass the zeros through cleanly. The `global_mean_pool` subsequently averages a single all-zeros vector to produce an all-zeros graph embedding for that specific frame. Functionally, this is mathematically identical to what PyTorch Geometric naturally produces for an empty graph during standard training.
+
+**Why does the deployment model remain valid without retraining?**
+Because the spatial and temporal arithmetic remains identical, the TorchScript artifact (`deployment.pt`) does not need to be rebuilt or retrained. It still processes the identical tensor structures, simply bypassing a low-level C++ indexing limitation by keeping the `batch` tensor contiguous and aligned with `seq_lengths`.
