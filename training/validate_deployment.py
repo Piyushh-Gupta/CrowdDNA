@@ -50,10 +50,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="experiments/baseline.yaml")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to the trained checkpoint (e.g., experiments/runs/.../checkpoints/best.pt)")
-    parser.add_argument("--export-dir", type=str, default="experiments/deployment_validation")
+    parser.add_argument("--export-dir", type=str, default=None, help="Directory to save the deployment artifact. Defaults to <checkpoint_dir>/../deploy")
     args = parser.parse_args()
     
-    export_dir = Path(args.export_dir)
+    if args.export_dir:
+        export_dir = Path(args.export_dir)
+    else:
+        # Default to experiments/runs/<experiment>/deploy
+        export_dir = Path(args.checkpoint).parent.parent / "deploy"
+        
     export_dir.mkdir(parents=True, exist_ok=True)
     
     with open(args.config, "r", encoding="utf-8") as f:
