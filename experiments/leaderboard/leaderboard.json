@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "schema_version": "1.0.0",
+    "generation_timestamp": "2026-07-23T17:33:00.509739+00:00",
+    "generator_version": "1.0.0"
+  },
+  "leaderboard": [
+    {
+      "Rank": 1,
+      "Experiment": "baseline_20260722_230537",
+      "Timestamp": "2026-07-22T17:35:37.590284+00:00",
+      "Git Commit": "6fdc5b0558c9bd9fe4483be0cb7d63b4d764d531",
+      "F1 Score": 1.0,
+      "Accuracy": 1.0,
+      "Precision": 1.0,
+      "Recall": 1.0,
+      "Deployment Latency (ms)": 4.65,
+      "TorchScript Size (MB)": 1.71,
+      "Training Time (s)": 1662.621191100001,
+      "Peak GPU Alloc (MB)": "N/A",
+      "Path": "experiments\\runs\\baseline_20260722_230537"
+    },
+    {
+      "Rank": 2,
+      "Experiment": "baseline_20260722_214232",
+      "Timestamp": "2026-07-22T16:12:32.929847+00:00",
+      "Git Commit": "fcdedcc8e30427923433286605caaaa074239269",
+      "F1 Score": "N/A",
+      "Accuracy": "N/A",
+      "Precision": "N/A",
+      "Recall": "N/A",
+      "Deployment Latency (ms)": "N/A",
+      "TorchScript Size (MB)": "N/A",
+      "Training Time (s)": "N/A",
+      "Peak GPU Alloc (MB)": "N/A",
+      "Path": "experiments\\runs\\baseline_20260722_214232"
+    }
+  ]
+}
