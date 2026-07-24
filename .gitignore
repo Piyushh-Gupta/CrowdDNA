@@ -48,6 +48,10 @@ outputs/
 *.pth
 *.onnx
 commit_history.txt
+error_log*
+ci_log.txt
+*.tmp
+*.bak
 
 # Jupyter
 .ipynb_checkpoints
