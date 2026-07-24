@@ -22,7 +22,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         # requirements-ci.txt is a lightweight subset of requirements.txt.
-        # Heavy training-only packages (torch, torch-geometric, ultralytics,
+        # Heavy training-only packages (onnx, onnxruntime,
         # gradio) are excluded to keep CI fast. They will be added to this
         # file as the corresponding modules are implemented and merged.
         pip install -r requirements-ci.txt

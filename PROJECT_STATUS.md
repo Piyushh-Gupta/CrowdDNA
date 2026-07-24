@@ -2,7 +2,7 @@
 
 ## Current Phase
 
-Phase 5 — Synthetic Data Generation
+Phase 12C — Repository Hardening
 
 ---
 
@@ -23,26 +23,31 @@ Core Modules
 - ScenarioFactory
 - SimulationRunner
 - AutoLabeler
+- DatasetSerializer
+- generate_dataset()
+- GraphBuilder
+- GraphDataset
+- CrowdDNAGAT (GAT Model)
+- TemporalEncoder (GRU Model)
+- CrowdDNAModel (Full Architecture)
+- Training Loop & Checkpointing
+- Model Exporter (TorchScript & ONNX)
+- Inference Runtime (Backend Abstraction)
+- SequenceBuffer
+- Pipeline Integration
+- App integration (Gradio)
 
 ---
 
 # In Progress
 
-None
+Repository Hardening (Code Quality, Audits, Cleanup)
 
 ---
 
 # Next
 
-DatasetSerializer
-
-↓
-
-generate_dataset()
-
-↓
-
-Integration Testing
+Phase 13 — Open Source Release
 
 ---
 

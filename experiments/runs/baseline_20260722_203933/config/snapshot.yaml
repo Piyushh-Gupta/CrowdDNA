@@ -1,0 +1,21 @@
+model:
+  classes:
+  - Safe
+  - Congesting
+  - Critical
+  gnn_hidden_dim: 128
+  gru_bidirectional: true
+  gru_dropout: 0.1
+  gru_hidden_dim: 64
+  gru_num_layers: 2
+  num_gnn_layers: 2
+simulation:
+  output_dir: data/simulated
+training:
+  batch_size: 16
+  checkpoint_dir: C:\Users\piyus\Downloads\CrowdDNA\experiments\runs\baseline_20260722_203933\checkpoints
+  deterministic: true
+  learning_rate: 0.001
+  num_epochs: 50
+  random_seed: 42
+  validation_split: 0.2

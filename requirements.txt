@@ -11,8 +11,6 @@ opencv-python-headless==4.9.0.80
 ultralytics==8.1.29  # YOLOv8
 
 # PyTorch & Graph Neural Networks
-torch==2.2.1
-torchvision==0.17.1
 torch-geometric==2.5.0
 networkx==3.2.1
 
@@ -22,6 +20,7 @@ onnxruntime==1.17.1
 
 # Web App & Visualization
 gradio==4.21.0
+huggingface-hub<0.24.0  # Required by gradio 4.21.0
 matplotlib==3.8.3
 plotly==5.19.0
 
