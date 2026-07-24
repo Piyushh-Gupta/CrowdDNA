@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Type, Callable, Any
+from training.reproducibility.metadata import ExperimentManifest, EnvironmentSnapshot
 
 class Severity(Enum):
     CRITICAL = 4
@@ -48,7 +49,6 @@ class ValidatorRegistry:
         return dict(cls._metadata)
 
 # Define some built-in validators
-from training.reproducibility.metadata import ExperimentManifest, EnvironmentSnapshot
 
 @ValidatorRegistry.register(ValidatorMetadata(name="git_clean", version="1.0", severity=Severity.MAJOR))
 class GitCleanValidator:
