@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "protocol": "robustness",
+    "deployment_model": "experiments\\runs\\baseline_20260722_230537\\deploy\\deployment.pt",
+    "random_seed": 42
+  },
+  "results": {
+    "baseline": {
+      "Accuracy": 0.9966666666666667,
+      "Average Latency (ms)": 206.96357299999818,
+      "Mean Confidence": 0.9941044270992279
+    },
+    "missing_detections": {
+      "Accuracy": 0.9966666666666667,
+      "Average Latency (ms)": 170.57164999999256,
+      "Mean Confidence": 0.9938110152880351
+    },
+    "gaussian_noise": {
+      "Accuracy": 0.9966666666666667,
+      "Average Latency (ms)": 188.65985199999594,
+      "Mean Confidence": 0.9941073880592982
+    },
+    "random_frame_drops": {
+      "Accuracy": 0.9966666666666667,
+      "Average Latency (ms)": 175.6985256666711,
+      "Mean Confidence": 0.9842481569449106
+    }
+  }
+}

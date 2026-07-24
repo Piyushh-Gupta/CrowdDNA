@@ -1,0 +1,74 @@
+{
+  "experiment_name": "baseline_20260722_230537",
+  "environment": {
+    "Python": "3.11.0",
+    "Platform": "Windows-10-10.0.26200-SP0",
+    "CPU": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "System RAM": "N/A (psutil not guaranteed)",
+    "PyTorch": "2.2.1+cpu",
+    "CUDA": "N/A",
+    "Torch Geometric": "2.5.0",
+    "GPU Name": "N/A"
+  },
+  "model_metadata": {
+    "parameter_count": 422278,
+    "trainable_parameters": 422278,
+    "checkpoint_size_mb": 4.86,
+    "torchscript_size_mb": 1.71,
+    "onnx_size_mb": 0.0,
+    "configuration": {
+      "gnn_hidden_dim": 128,
+      "gru_hidden_dim": 64,
+      "gru_num_layers": 2,
+      "gru_dropout": 0.1,
+      "gru_bidirectional": true,
+      "num_gnn_layers": 2,
+      "classes": [
+        "Safe",
+        "Congesting",
+        "Critical"
+      ]
+    },
+    "sequence_length": "N/A",
+    "gat_hidden_dim": 128,
+    "attention_heads": "N/A",
+    "gru_hidden_size": 64,
+    "gru_layers": 2,
+    "bidirectional": true
+  },
+  "dataset_summary": {
+    "training_samples": "N/A",
+    "validation_samples": 60,
+    "test_samples": "N/A",
+    "class_distribution": {
+      "Safe": 17,
+      "Congesting": 27,
+      "Critical": 16
+    },
+    "dataset_hash": "N/A",
+    "manifest_version": "N/A"
+  },
+  "statistics": {
+    "confidence": {
+      "mean": 0.9928437997897466,
+      "median": 0.9950800836086273,
+      "std": 0.005747346383759407,
+      "min": 0.9626897573471069,
+      "max": 0.9984026551246643,
+      "p95": 0.998322382569313
+    },
+    "prediction_entropy": 0.059561796946451896,
+    "expected_calibration_error": "N/A (Placeholder)",
+    "brier_score": "N/A (Placeholder)"
+  },
+  "gpu_memory": "N/A",
+  "performance": {
+    "accuracy": 1.0,
+    "precision_macro": 1.0,
+    "recall_macro": 1.0,
+    "f1_macro": 1.0,
+    "training_time": 1662.621191100001,
+    "evaluation_time": 13.442767800001093,
+    "latency": 5.89
+  }
+}

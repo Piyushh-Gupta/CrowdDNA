@@ -15,5 +15,5 @@ class UploadSizeExceededError(CrowdFlowError):
     pass
 
 class ModelInferenceError(CrowdFlowError):
-    """Raised when the ONNX runtime fails during risk classification."""
+    """Raised when the inference runtime fails during risk classification."""
     pass

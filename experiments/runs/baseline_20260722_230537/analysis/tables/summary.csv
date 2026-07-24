@@ -1,0 +1,2 @@
+Experiment,Accuracy,Precision,Recall,F1,Latency,Training Time,Evaluation Time,GPU Memory,Parameter Count,Checkpoint Size
+baseline_20260722_230537,1.0,1.0,1.0,1.0,5.89,1662.621191100001,13.442767800001093,N/A,422278,4.86

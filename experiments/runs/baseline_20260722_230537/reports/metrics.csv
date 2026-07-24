@@ -1,0 +1,4 @@
+Class,Precision,Recall,F1,Support
+Safe,1.0000,1.0000,1.0000,17
+Congesting,1.0000,1.0000,1.0000,27
+Critical,1.0000,1.0000,1.0000,16

@@ -10,44 +10,26 @@ An AI-powered crowd risk prediction system using synthetic crowd simulation, gra
 
 # Current Team
 
-## Piyush Gupta
+## Piyush Gupta (ML Subsystem)
 
 Primary Responsibilities
+- Model architecture (GAT, Temporal Encoder)
+- Synthetic data generation & training pipelines
+- Canonical checkpoints (`best.pt`)
+- Deployment export (`validate_deployment`, `deployment.pt`)
+- Inference runtime (`InferenceRuntime`)
+- Sequence buffering (`SequenceBuffer`)
+- CI/CD, Git workflow, repository architecture
 
-- Repository architecture
-- Synthetic data generation pipeline
-- CI/CD
-- Git workflow
-- AI-assisted development workflow
+## Aayushi (Application Layer)
 
-Completed
+Primary Responsibilities
+- Application UI (Gradio `app.py`)
+- Video rendering and annotation (`FrameAnnotator`, `TimelineBuilder`)
+- End-to-end orchestration (`CrowdFlowPipeline`)
+- User interaction and environment configuration (`CROWDDNA_MODEL_PATH`)
 
-- Repository setup
-- GitHub Actions
-- Branch protection
-- Documentation
-- TrajectoryRecord
-- ScenarioFactory
-- SimulationRunner
-- AutoLabeler
-
----
-
-## Aayushi
-
-Responsible for modules assigned separately.
-
-Before implementing anything:
-
-- Pull latest develop.
-- Read:
-  - AGENTS.md
-  - WORKFLOW.md
-  - CODING_STANDARDS.md
-  - PROJECT_STATUS.md
-  - ARCHITECTURE.md
-
-Never redesign completed modules.
+*Boundary Agreement:* The ML Subsystem provides generated `deployment.pt` artifacts and the `InferenceRuntime` API. The Application Layer consumes these artifacts via the `CrowdFlowPipeline` orchestration without modifying runtime internals.
 
 ---
 

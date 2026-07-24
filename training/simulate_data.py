@@ -1133,8 +1133,9 @@ def _print_summary(
     for rec in records:
         scenario_counts[rec.scenario_name] = scenario_counts.get(rec.scenario_name, 0) + 1
 
-    sep = "─" * 52
-    print(f"\n{'CrowdFlow DNA — Dataset Generation Complete':^52}")
+    sep = "=" * 44
+    print(sep)
+    print("  CrowdFlow DNA - Dataset Generation Complete  ")
     print(sep)
     print(f"  Output directory : {output_dir}")
     print(f"  Total sequences  : {len(records)}")
