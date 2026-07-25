@@ -1,49 +1,27 @@
-# CrowdDNA Roadmap
+# CrowdDNA Project Roadmap
 
-## Phase 5 (Completed)
-✅ TrajectoryRecord
-✅ ScenarioFactory
-✅ SimulationRunner
-✅ AutoLabeler
-✅ DatasetSerializer
-✅ generate_dataset()
-✅ Integration Tests
+## Milestone: Implementation I1 (Data Loaders)
+- **Owner**: Piyush
+- **Reviewer**: Aayushi
+- **Dependencies**: None
+- **Estimated effort**: 5 days
+- **Priority**: P0
+- **Status**: Ready
 
----
+## Milestone: Implementation I2 (Training Pipeline)
+- **Owner**: Piyush
+- **Reviewer**: Aayushi
+- **Dependencies**: I1
+- **Estimated effort**: 7 days
+- **Priority**: P0
+- **Status**: Backlog
 
-## Phase 6 (Completed)
-✅ Graph Builder
-✅ Graph Dataset
-✅ PyTorch Geometric Integration
+## Milestone: Implementation I3 (Frontend Integration)
+- **Owner**: Aayushi
+- **Reviewer**: Piyush
+- **Dependencies**: I2
+- **Estimated effort**: 7 days
+- **Priority**: P1
+- **Status**: Backlog
 
----
-
-## Phase 7 & 8 (Completed)
-✅ Graph Attention Network (GAT)
-✅ Temporal Encoder (GRU)
-✅ Risk Prediction Architecture (CrowdDNAModel)
-
----
-
-## Phase 9 & 10 (Completed)
-✅ Training Pipeline
-✅ Evaluation Framework
-✅ Hyperparameter / Experiment Workflow
-
----
-
-## Phase 11 (Completed)
-✅ Model Export (TorchScript & ONNX)
-✅ Inference Runtime Abstraction (ONNXBackend, TorchScriptBackend)
-
----
-
-## Phase 12 (Completed)
-✅ Inference Pipeline Integration (SequenceBuffer)
-✅ Real-time App Integration (app.py)
-
----
-
-## Phase 13 (Next)
-⬜ Open Source Release
-⬜ Repository Hardening (Phase 12C - In Progress)
+*(More milestones I4-I10 will follow this exact structure)*
