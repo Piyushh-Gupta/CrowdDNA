@@ -16,11 +16,11 @@ def test_registry_ordering():
 
 def test_registry_thread_safety():
     reg = SecurityRegistry()
-    def worker():
+    def worker(t_idx):
         for i in range(100):
-            reg.register(f"w_{threading.get_ident()}_{i}", lambda: [], priority=i)
+            reg.register(f"w_{t_idx}_{i}", lambda: [], priority=i)
     
-    threads = [threading.Thread(target=worker) for _ in range(10)]
+    threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(10)]
     for t in threads:
         t.start()
     for t in threads:
