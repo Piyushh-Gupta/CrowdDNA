@@ -1,17 +1,17 @@
-# Iteration 2: Graph ML & Training
+# Iteration 2: Python SDK
 
 ## Objective
-Implement runtime execution for Graph ML & Training.
+Implement runtime execution for Python SDK.
 
 ## Deliverables
-- Executable Python/TS code mapped to Graph ML & Training.
+- Executable Python/TS code mapped to Python SDK.
 - Associated Unit/Integration Tests.
 
 ## Dependencies
 - Blocked By: I1
 
 ## Owner
-- Piyush
+- Aayushi
 
 ## Risks
 - Misalignment of schema contracts. (Mitigation: strict validation steps).

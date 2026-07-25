@@ -1,17 +1,17 @@
-# Iteration 4: Python SDK
+# Iteration 4: Auth & Security
 
 ## Objective
-Implement runtime execution for Python SDK.
+Implement runtime execution for Auth & Security.
 
 ## Deliverables
-- Executable Python/TS code mapped to Python SDK.
+- Executable Python/TS code mapped to Auth & Security.
 - Associated Unit/Integration Tests.
 
 ## Dependencies
-- Blocked By: I3
+- Blocked By: I1, I2, I3
 
 ## Owner
-- Aayushi
+- Piyush
 
 ## Risks
 - Misalignment of schema contracts. (Mitigation: strict validation steps).

@@ -1,20 +1,10 @@
 # Sprint Plan
 
-## Sprint 1 (I1: Data Engineering)
-- **Deliverables**: Dataset Loaders, Preprocessing pipelines.
-- **Review Goal**: Validate CSV loader robustness.
-- **Merge Goal**: Merge data loaders into `develop`.
-- **Demo Goal**: Terminal output of a normalized trajectory.
-- **Definition of Done**: Tests pass, DoR met, Code Reviewed.
-- **Exit Criteria**: Downstream Graph ML can consume the data format.
+## Sprint 1 (Completed)
+- ML & Data Engineering
 
-## Sprint 2 (I2: Graph ML)
-- **Deliverables**: Training loops, GAT models.
-- **Review Goal**: Validate memory limits in training loop.
-- **Merge Goal**: Merge ML pipeline.
-- **Demo Goal**: Loss curve graph generation.
-- **Definition of Done**: Tests pass, DoR met.
-- **Exit Criteria**: Model checkpoint successfully exported.
+## Sprint 2 (Completed)
+- Graph ML & Training
 
 ## Sprint 3 (I3: Core API)
 - **Deliverables**: FastAPI endpoints for Inference.

@@ -1,10 +1,10 @@
-# Iteration 1: Data Engineering
+# Iteration 1: Core API Services
 
 ## Objective
-Implement runtime execution for Data Engineering.
+Implement runtime execution for Core API Services.
 
 ## Deliverables
-- Executable Python/TS code mapped to Data Engineering.
+- Executable Python/TS code mapped to Core API Services.
 - Associated Unit/Integration Tests.
 
 ## Dependencies
