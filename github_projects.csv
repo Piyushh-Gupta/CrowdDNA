@@ -1,0 +1,11 @@
+Title,Description,Epic,Iteration,Sprint,Owner,Reviewer,Priority,Status,Labels,Dependencies,Estimated Effort,Branch Name
+Dataset Registry,Implement Dataset loaders,Data,I1,Sprint 1,Piyush,Aayushi,P0,Backlog,backend,,3,feat/dataset-registry
+Graph Pipeline,Implement graph construction,ML,I2,Sprint 2,Piyush,Aayushi,P0,Backlog,ml,Dataset Registry,5,feat/graph-pipeline
+Training Loop,Implement local training,ML,I3,Sprint 3,Piyush,Aayushi,P0,Backlog,ml,Graph Pipeline,5,feat/training-loop
+Evaluation,Metrics and Explainability,ML,I4,Sprint 4,Piyush,Aayushi,P1,Backlog,ml,Training Loop,4,feat/evaluation
+Inference API,FastAPI inference service,Core,I5,Sprint 5,Piyush,Aayushi,P0,Backlog,backend,Training Loop,5,feat/inference-api
+SDK Client,WebSocket Python SDK,Core,I6,Sprint 5,Aayushi,Piyush,P1,Backlog,sdk,Inference API,4,feat/sdk-client
+Dashboard UI,React dashboard setup,Frontend,I7,Sprint 1,Aayushi,Piyush,P0,Backlog,frontend,,5,feat/dashboard-ui
+Auth RBAC,Implement login and roles,Frontend,I8,Sprint 6,Aayushi,Piyush,P1,Backlog,"frontend,backend",Dashboard UI,5,feat/auth-rbac
+Security CI,Penetration tests,Prod,I9,Sprint 7,Piyush,Aayushi,P0,Backlog,security,Inference API,3,feat/security-ci
+v1.0 Release,Final packaging,Prod,I10,Sprint 8,Piyush,Aayushi,P0,Backlog,release,Security CI,3,feat/v1-release
