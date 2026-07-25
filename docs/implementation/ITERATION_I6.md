@@ -1,10 +1,10 @@
-# Iteration 6: Auth & Security
+# Iteration 6: v1.0 Release Candidate
 
 ## Objective
-Implement runtime execution for Auth & Security.
+Implement runtime execution for v1.0 Release Candidate.
 
 ## Deliverables
-- Executable Python/TS code mapped to Auth & Security.
+- Executable Python/TS code mapped to v1.0 Release Candidate.
 - Associated Unit/Integration Tests.
 
 ## Dependencies
