@@ -13,7 +13,7 @@ def test_documentation_exists():
         "docs/PROJECT_MANAGEMENT.md",
         "docs/GITHUB_PROJECT_SETUP.md",
         "docs/DEFINITION_OF_DONE.md",
-        "docs/ADR/ADR-0003.md",
+        "docs/adr/ADR-0003-multi-contributor-workflow.md",
         "ROADMAP.md",
         "CODEOWNERS"
     ]
@@ -27,7 +27,7 @@ def test_ownership_exists():
         assert "Core Contributor: Aayushi" in content
 
 def test_adr_numbering():
-    with open("docs/ADR/ADR-0003.md", "r", encoding="utf-8") as f:
+    with open("docs/adr/ADR-0003-multi-contributor-workflow.md", "r", encoding="utf-8") as f:
         content = f.read()
         assert "ADR 0003" in content
 
