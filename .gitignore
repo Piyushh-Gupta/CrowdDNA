@@ -55,3 +55,11 @@ ci_log.txt
 
 # Jupyter
 .ipynb_checkpoints
+
+# Experiment Runtime Artifacts
+experiments/**/logs/
+experiments/**/plots/
+experiments/**/exports/
+experiments/**/runs/
+experiments/explainability/
+experiments/observability_exports/
