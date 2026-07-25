@@ -1,19 +1,28 @@
-# Iteration I4: Evaluation & Metrics
+# Iteration 4: Python SDK
 
 ## Objective
-Implement Evaluation & Metrics.
+Implement runtime execution for Python SDK.
 
 ## Deliverables
-- Working Evaluation & Metrics implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Python SDK.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- I3
+- Blocked By: I3
 
 ## Owner
-- Piyush
+- Aayushi
+
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
 
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).

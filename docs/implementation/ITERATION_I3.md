@@ -1,19 +1,28 @@
-# Iteration I3: End-to-End Training Loop
+# Iteration 3: Core API Services
 
 ## Objective
-Implement End-to-End Training Loop.
+Implement runtime execution for Core API Services.
 
 ## Deliverables
-- Working End-to-End Training Loop implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Core API Services.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- I2
+- Blocked By: I2
 
 ## Owner
 - Piyush
 
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
+
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).

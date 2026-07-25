@@ -1,12 +1,9 @@
 # Dependency Analysis
 
 ## Critical Path
-Dataset Ingestion -> Graph Construction -> Training Loop -> Evaluation -> Inference API -> Frontend Integration -> SDK -> Production Certification
+Data Engineering -> Graph ML -> Core API Services -> SDK & Frontend Integration -> Release Candidate
 
-## Blocking Tasks
-- **Dataset Ingestion** blocks Graph Construction.
-- **Inference API** blocks Frontend Dashboard and SDK.
-
-## Parallel Tasks
-- Frontend UI scaffolding can occur in parallel with Backend ML Training.
-- Security and Deployment configurations can run in parallel with Frontend Integration.
+## Explicit Blocking Dependencies (Aayushi Workstream)
+- **Frontend API Integration**: Blocked Until **Inference Engine API endpoints (I3)** complete.
+- **Python SDK Streaming**: Blocked Until **Inference Engine WebSocket support (I3)** complete.
+- **Dashboard E2E Tests**: Blocked Until **Frontend API Integration (I5)** complete.

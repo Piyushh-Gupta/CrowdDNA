@@ -1,19 +1,28 @@
-# Iteration I2: Graph Construction & Storage
+# Iteration 2: Graph ML & Training
 
 ## Objective
-Implement Graph Construction & Storage.
+Implement runtime execution for Graph ML & Training.
 
 ## Deliverables
-- Working Graph Construction & Storage implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Graph ML & Training.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- I1
+- Blocked By: I1
 
 ## Owner
 - Piyush
 
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
+
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).

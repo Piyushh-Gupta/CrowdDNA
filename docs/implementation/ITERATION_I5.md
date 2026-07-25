@@ -1,19 +1,28 @@
-# Iteration I5: Inference API Service
+# Iteration 5: Frontend Dashboard
 
 ## Objective
-Implement Inference API Service.
+Implement runtime execution for Frontend Dashboard.
 
 ## Deliverables
-- Working Inference API Service implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Frontend Dashboard.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- I3
+- Blocked By: I3
 
 ## Owner
-- Piyush
+- Aayushi
+
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
 
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).

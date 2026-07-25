@@ -1,19 +1,28 @@
-# Iteration I6: Real-Time Streaming SDK
+# Iteration 6: Auth & Security
 
 ## Objective
-Implement Real-Time Streaming SDK.
+Implement runtime execution for Auth & Security.
 
 ## Deliverables
-- Working Real-Time Streaming SDK implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Auth & Security.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- I5
+- Blocked By: I5
 
 ## Owner
-- Aayushi
+- Piyush
+
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
 
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).

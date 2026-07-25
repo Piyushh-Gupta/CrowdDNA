@@ -1,10 +1,13 @@
 # Master Implementation Plan
 
-## Objective
-Convert CrowdDNA from an architecture-first repository to an execution-first product. All architecture is stable. Remaining effort focuses exclusively on implementation, integration, testing, and production stabilization.
+## Execution Roadmap & Iterations
+The optimal execution sequence ensuring consumer clients do not build against moving targets.
 
-## Milestones
-- **M1:** Backend & ML Core (Iterations I1-I4)
-- **M2:** API & SDK (Iterations I5-I6)
-- **M3:** Frontend & Dashboard (Iterations I7-I8)
-- **M4:** Security, Performance, & Launch (Iterations I9-I10)
+- **Iteration 1**: Data Engineering & Preprocessing
+- **Iteration 2**: Graph ML Construction & Training Loop
+- **Iteration 3**: Core API Services & Inference Engine (Defines backend contracts)
+- **Iteration 4**: Python SDK (Depends on I3)
+- **Iteration 5**: Frontend Integration & Dashboard (Depends on I3)
+- **Iteration 6**: Auth, RBAC & Security
+- **Iteration 7**: Production CI/CD & Performance
+- **Iteration 8**: v1.0 Release Candidate
