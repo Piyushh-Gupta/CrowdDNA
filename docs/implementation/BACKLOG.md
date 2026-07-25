@@ -1,21 +1,37 @@
-# Implementation Backlog
+# Implementation Backlog & Work Breakdown Structure (WBS)
 
-## Epics & Features
-1. **Epic: Data Engineering & Processing**
-   - Feature: Dataset Ingestion Pipelines
-   - Feature: Real-time Preprocessing
-2. **Epic: Graph Machine Learning**
-   - Feature: Graph Construction Pipeline
-   - Feature: Training Loop & Checkpointing
-3. **Epic: Evaluation & Explainability**
-   - Feature: Validation Metrics
-   - Feature: Visual Explainability (GNN Attention)
-4. **Epic: Core Services & SDK**
-   - Feature: Inference API
-   - Feature: Streaming SDK
-5. **Epic: Frontend Web Application**
-   - Feature: Dashboard UI & Visualizations
-   - Feature: RBAC & Authentication
-6. **Epic: Production Certification**
-   - Feature: Security CI/CD
-   - Feature: Final Release Candidate
+## Epic 1: Data Engineering
+- **Feature 1.1: Dataset Registry**
+  - Task 1.1.1: CSV Loader
+    - Subtask: Read trajectories
+    - Subtask: Error handling for missing columns
+  - Task 1.1.2: Trajectory Parser
+    - Subtask: Extract spatio-temporal features
+- **Feature 1.2: Preprocessing Pipeline**
+  - Task 1.2.1: Normalization
+    - Subtask: Min-max scaling
+  - Task 1.2.2: Interpolation
+    - Subtask: Spline interpolation for missing timesteps
+
+## Epic 2: Graph Machine Learning
+- **Feature 2.1: Graph Construction**
+  - Task 2.1.1: Adjacency Matrices
+    - Subtask: KNN distance calculation
+- **Feature 2.2: Training Loop**
+  - Task 2.2.1: Epoch Management
+    - Subtask: Forward/backward passes
+
+## Epic 3: Core API Services
+- **Feature 3.1: Inference Engine**
+  - Task 3.1.1: FastAPI Endpoints
+    - Subtask: Request validation schemas
+
+## Epic 4: SDK & Frontend Integration
+- **Feature 4.1: Python SDK**
+  - Task 4.1.1: Streaming Client
+    - Subtask: WebSocket bindings
+    - Blocked Until: Inference Engine Endpoints complete (Epic 3.1)
+- **Feature 4.2: Dashboard UI**
+  - Task 4.2.1: 2D Simulation Canvas
+    - Subtask: Canvas rendering loop
+    - Blocked Until: API Schemas Finalized (Epic 3.1)

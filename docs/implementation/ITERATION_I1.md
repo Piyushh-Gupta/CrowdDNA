@@ -1,19 +1,28 @@
-# Iteration I1: Dataset Ingestion & Preprocessing
+# Iteration 1: Data Engineering
 
 ## Objective
-Implement Dataset Ingestion & Preprocessing.
+Implement runtime execution for Data Engineering.
 
 ## Deliverables
-- Working Dataset Ingestion & Preprocessing implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Data Engineering.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- None
+- Blocked By: None
 
 ## Owner
 - Piyush
 
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
+
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).

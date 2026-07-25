@@ -1,19 +1,28 @@
-# Iteration I7: Frontend Dashboard Setup
+# Iteration 7: Production CI/CD
 
 ## Objective
-Implement Frontend Dashboard Setup.
+Implement runtime execution for Production CI/CD.
 
 ## Deliverables
-- Working Frontend Dashboard Setup implementation.
-- Unit Tests.
+- Executable Python/TS code mapped to Production CI/CD.
+- Associated Unit/Integration Tests.
 
 ## Dependencies
-- None
+- Blocked By: I6
 
 ## Owner
-- Aayushi
+- Piyush
+
+## Risks
+- Misalignment of schema contracts. (Mitigation: strict validation steps).
 
 ## Acceptance Criteria
-- All tests pass.
-- Ruff passes.
-- Code reviewed and merged.
+- Code completes its functional task without mock data.
+- 90%+ code coverage for new files.
+
+## Exit Criteria
+- PR merged to `develop`.
+- Downstream iterations are unblocked.
+
+## Estimated Duration
+- 2 Weeks (1 Sprint).
