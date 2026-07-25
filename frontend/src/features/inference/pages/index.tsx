@@ -1,0 +1,1 @@
+export default function InferencePage() { return <div>Inference</div>; }

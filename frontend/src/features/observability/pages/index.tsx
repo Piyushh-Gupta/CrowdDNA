@@ -1,0 +1,1 @@
+export default function ObservabilityPage() { return <div>Observability</div>; }
