@@ -1,0 +1,2 @@
+class ObservabilityService:
+    pass
