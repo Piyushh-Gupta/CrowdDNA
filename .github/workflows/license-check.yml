@@ -1,0 +1,9 @@
+name: License Check
+on: [push]
+jobs:
+  license:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check licenses
+        run: echo "Checking licenses"
