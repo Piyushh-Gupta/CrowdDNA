@@ -1,5 +1,15 @@
 # Render Deployment Setup
 
+## Verified Runtime Environment
+- **Docker Base Image**: `python:3.10-slim`
+- **Python Version**: 3.10.x
+- **CPU Architecture**: AMD64 / x86_64
+- **Minimum RAM**: 2GB
+- **Recommended RAM**: 4GB+
+- **Region Recommendation**: US East (or closest to majority of user base)
+
+*For a detailed breakdown of library compatibility, see [DEPENDENCY_COMPATIBILITY.md](DEPENDENCY_COMPATIBILITY.md).*
+
 This document provides a comprehensive guide to deploying the CrowdDNA Gradio application on Render.
 
 ## Configuration
