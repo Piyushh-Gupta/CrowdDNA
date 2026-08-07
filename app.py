@@ -11,14 +11,11 @@ When the variable is absent, the pipeline runs in dummy mode.
 import logging
 import os
 import tempfile
-import threading
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import gradio as gr
 import gradio.networking
-from gradio.exceptions import ServerFailedToStartError
 import numpy as np
 
 from crowdflow_dna.errors import CrowdFlowError
@@ -214,26 +211,6 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
         inputs=[input_video],
         outputs=[output_video, timeline_table, metadata_table, status_box],
     )
-
-# Monkey-patch Gradio's hardcoded 5-second timeout to 60 seconds
-# to prevent timeout failures on slow PaaS cold starts like Render.
-_original_run_in_thread = gradio.networking.Server.run_in_thread
-
-def _patched_run_in_thread(self):
-    self.thread = threading.Thread(target=self.run, daemon=True)
-    if getattr(self, "reloader", None):
-        self.watch_thread = threading.Thread(target=self.watch, daemon=True)
-        self.watch_thread.start()
-    self.thread.start()
-    start_time = time.time()
-    while not getattr(self, "started", False):
-        time.sleep(1e-3)
-        if time.time() - start_time > 60:
-            raise ServerFailedToStartError(
-                "Server failed to start. Please check that the port is available."
-            )
-
-gradio.networking.Server.run_in_thread = _patched_run_in_thread
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 7860))
