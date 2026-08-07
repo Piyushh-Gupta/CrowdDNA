@@ -19,7 +19,7 @@ onnx==1.15.0
 onnxruntime==1.17.1
 
 # Web App & Visualization
-gradio>=4.44.0,<5.0.0
+gradio==4.36.1
 huggingface-hub<0.24.0  # Required by gradio 4.21.0
 jinja2<3.1.4  # Required by gradio 4.21.0 to prevent TypeError: unhashable type: 'dict'
 fastapi<0.113.0  # Required to maintain TemplateResponse compatibility with gradio 4.21.0
