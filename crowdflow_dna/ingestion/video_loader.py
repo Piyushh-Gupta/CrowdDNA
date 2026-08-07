@@ -7,6 +7,7 @@ samples frames for downstream processing in the detection module.
 import logging
 import os
 import concurrent.futures
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -23,6 +24,23 @@ from crowdflow_dna.errors import (
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = frozenset({".mp4", ".avi"})
+
+
+def _init_and_read(path: str):
+    """Helper to initialize VideoCapture and read the first frame entirely on the worker thread."""
+    thread_id = threading.get_ident()
+    logger.info("[Worker %s] Worker started", thread_id)
+    
+    logger.info("[Worker %s] Before VideoCapture", thread_id)
+    cap = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG)
+    logger.info("[Worker %s] After VideoCapture", thread_id)
+    
+    logger.info("[Worker %s] Before cap.read()", thread_id)
+    ret, frame = cap.read()
+    logger.info("[Worker %s] After cap.read() - ret: %s", thread_id, ret)
+    
+    logger.info("[Worker %s] Before return", thread_id)
+    return cap, ret, frame
 
 
 class VideoIngestor:
@@ -78,27 +96,36 @@ class VideoIngestor:
         logger.info("OpenCV version: %s", cv2.__version__)
         
         cap = None
-        logger.info("Before cv2.VideoCapture(path, cv2.CAP_FFMPEG)")
+        ret = False
+        first_frame = None
+        
+        main_thread_id = threading.get_ident()
+        
+        logger.info("[Main %s] Before cv2.VideoCapture(path, cv2.CAP_FFMPEG)", main_thread_id)
         try:
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            logger.info("Before executor.submit()")
-            # Force FFMPEG backend to avoid GStreamer deadlocks in headless environments
-            future = executor.submit(cv2.VideoCapture, str(path), cv2.CAP_FFMPEG)
-            logger.info("After executor.submit()")
+            logger.info("[Main %s] Before executor.submit()", main_thread_id)
+            future = executor.submit(_init_and_read, str(path))
+            logger.info("[Main %s] After executor.submit()", main_thread_id)
             
-            logger.info("Waiting for future.result()")
+            logger.info("[Main %s] Waiting for future.result()", main_thread_id)
             try:
-                cap = future.result(timeout=10.0)
-            except concurrent.futures.TimeoutError:
-                logger.error("Timeout triggered")
+                cap, ret, first_frame = future.result(timeout=10.0)
+            except Exception as e:
+                logger.info("[Main %s] Timeout exception caught", main_thread_id)
+                logger.info("[Main %s] Exception type: %s", main_thread_id, type(e))
+                logger.info("[Main %s] Before future.cancel()", main_thread_id)
                 future.cancel()
+                logger.info("[Main %s] After future.cancel()", main_thread_id)
+                logger.info("[Main %s] Before executor.shutdown()", main_thread_id)
                 executor.shutdown(wait=False, cancel_futures=True)
-                logger.info("Executor shutdown complete")
-                raise VideoCorruptionError(f"Timeout while opening video: {path}")
+                logger.info("[Main %s] After executor.shutdown()", main_thread_id)
+                logger.info("[Main %s] Before raising VideoCorruptionError", main_thread_id)
+                raise VideoCorruptionError(f"Timeout while opening and reading video: {path}")
             
             executor.shutdown(wait=False)
             
-            logger.info("After cv2.VideoCapture, backend selected: %s", cap.getBackendName())
+            logger.info("[Main %s] After cv2.VideoCapture, backend selected: %s", main_thread_id, cap.getBackendName())
 
             logger.info("cap.isOpened() returned: %s", cap.isOpened())
             if not cap.isOpened():
@@ -115,7 +142,7 @@ class VideoIngestor:
             self._validate_duration(metadata["duration_seconds"], path)
 
             logger.info("Starting frame sampling")
-            frames = self._sample_frames(cap, metadata)
+            frames = self._sample_frames(cap, metadata, ret, first_frame)
             logger.info("Frame sampling complete")
         finally:
             if cap is not None:
@@ -198,43 +225,20 @@ class VideoIngestor:
         }
 
     def _sample_frames(
-        self, cap: cv2.VideoCapture, metadata: Dict[str, Any]
+        self, cap: cv2.VideoCapture, metadata: Dict[str, Any], ret: bool, frame: np.ndarray
     ) -> List[np.ndarray]:
         """Iterate through the video and sample frames based on config."""
         frames: List[np.ndarray] = []
         frame_index = 0
         
-        logger.info("Attempting first cap.read()")
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        logger.info("Before executor.submit()")
-        future = executor.submit(cap.read)
-        logger.info("After executor.submit()")
-        
-        logger.info("Waiting for future.result()")
-        logger.info("Before future.result(timeout)")
-        try:
-            ret, frame = future.result(timeout=5.0)
-        except Exception as e:
-            logger.info("Timeout exception caught")
-            logger.info("Exception type: %s", type(e))
-            logger.info("Before future.cancel()")
-            future.cancel()
-            logger.info("After future.cancel()")
-            logger.info("Before executor.shutdown()")
-            executor.shutdown(wait=False, cancel_futures=True)
-            logger.info("After executor.shutdown()")
-            logger.info("Before raising VideoCorruptionError")
-            raise VideoCorruptionError("Timeout while attempting to read the first frame.")
-        
-        executor.shutdown(wait=False)
-        
-        logger.info("After first cap.read() - ret: %s", ret)
+        main_thread_id = threading.get_ident()
+        logger.info("[Main %s] In _sample_frames, initial ret: %s", main_thread_id, ret)
         
         if not ret:
-            logger.info("EOF detected on first frame read.")
+            logger.info("[Main %s] EOF detected on first frame read.", main_thread_id)
             return frames
             
-        logger.info("First successful frame shape: %s", frame.shape)
+        logger.info("[Main %s] First successful frame shape: %s", main_thread_id, frame.shape)
         if frame_index % self.frame_sample_rate == 0:
             frames.append(frame)
         frame_index += 1
