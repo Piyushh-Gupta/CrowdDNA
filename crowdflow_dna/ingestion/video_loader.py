@@ -211,13 +211,19 @@ class VideoIngestor:
         logger.info("After executor.submit()")
         
         logger.info("Waiting for future.result()")
+        logger.info("Before future.result(timeout)")
         try:
             ret, frame = future.result(timeout=5.0)
-        except concurrent.futures.TimeoutError:
-            logger.error("Timeout triggered")
+        except Exception as e:
+            logger.info("Timeout exception caught")
+            logger.info("Exception type: %s", type(e))
+            logger.info("Before future.cancel()")
             future.cancel()
+            logger.info("After future.cancel()")
+            logger.info("Before executor.shutdown()")
             executor.shutdown(wait=False, cancel_futures=True)
-            logger.info("Executor shutdown complete")
+            logger.info("After executor.shutdown()")
+            logger.info("Before raising VideoCorruptionError")
             raise VideoCorruptionError("Timeout while attempting to read the first frame.")
         
         executor.shutdown(wait=False)
