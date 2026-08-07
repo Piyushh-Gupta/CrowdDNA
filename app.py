@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import gradio as gr
 import gradio.networking
+import gradio_client.utils as client_utils
 import numpy as np
 
 from crowdflow_dna.errors import CrowdFlowError
@@ -25,6 +26,16 @@ from crowdflow_dna.rendering.timeline import TimelineEntry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Monkeypatch gradio_client to prevent schema generation crash with Pydantic 2.x additionalProperties
+orig_schema_to_python = client_utils._json_schema_to_python_type
+
+def _patched_schema_to_python(schema, defs):
+    if isinstance(schema, bool):
+        return "Any"
+    return orig_schema_to_python(schema, defs)
+
+client_utils._json_schema_to_python_type = _patched_schema_to_python
 
 
 
