@@ -76,6 +76,7 @@ class VideoIngestor:
 
         logger.info("Checking file existence for %s", path)
         if not path.exists():
+            logger.info("[Thread %s] Before raise VideoCorruptionError (not found)", threading.get_ident())
             raise VideoCorruptionError(f"File not found: {path}")
 
         logger.info("Validating extension")
@@ -84,10 +85,12 @@ class VideoIngestor:
         size_bytes = os.path.getsize(path)
         logger.info("File size: %d bytes", size_bytes)
         if size_bytes == 0:
+            logger.info("[Thread %s] Before raise VideoCorruptionError (empty file)", threading.get_ident())
             raise VideoCorruptionError(f"File is empty: {path}")
 
         logger.info("Checking file permissions")
         if not os.access(path, os.R_OK):
+            logger.info("[Thread %s] Before raise VideoCorruptionError (unreadable)", threading.get_ident())
             raise VideoCorruptionError(f"File is not readable: {path}")
 
         logger.info("Validating file size against config max")
@@ -117,18 +120,21 @@ class VideoIngestor:
                 logger.info("[Main %s] Before future.cancel()", main_thread_id)
                 future.cancel()
                 logger.info("[Main %s] After future.cancel()", main_thread_id)
-                logger.info("[Main %s] Before executor.shutdown()", main_thread_id)
+                logger.info("[Main %s] Before executor.shutdown(wait=False, cancel_futures=True)", main_thread_id)
                 executor.shutdown(wait=False, cancel_futures=True)
-                logger.info("[Main %s] After executor.shutdown()", main_thread_id)
-                logger.info("[Main %s] Before raising VideoCorruptionError", main_thread_id)
+                logger.info("[Main %s] After executor.shutdown(wait=False, cancel_futures=True)", main_thread_id)
+                logger.info("[Main %s] Before raise VideoCorruptionError (timeout)", main_thread_id)
                 raise VideoCorruptionError(f"Timeout while opening and reading video: {path}")
             
+            logger.info("[Main %s] Before executor.shutdown(wait=False)", main_thread_id)
             executor.shutdown(wait=False)
+            logger.info("[Main %s] After executor.shutdown(wait=False)", main_thread_id)
             
             logger.info("[Main %s] After cv2.VideoCapture, backend selected: %s", main_thread_id, cap.getBackendName())
 
             logger.info("cap.isOpened() returned: %s", cap.isOpened())
             if not cap.isOpened():
+                logger.info("[Main %s] Before raise VideoCorruptionError (not opened)", main_thread_id)
                 raise VideoCorruptionError(
                     f"OpenCV could not open video: {path}. "
                     "The file may be corrupted or unreadable."
@@ -145,10 +151,12 @@ class VideoIngestor:
             frames = self._sample_frames(cap, metadata, ret, first_frame)
             logger.info("Frame sampling complete")
         finally:
+            logger.info("[Thread %s] Entering finally block in load()", threading.get_ident())
             if cap is not None:
-                logger.info("Releasing VideoCapture...")
+                logger.info("[Thread %s] Before cap.release()", threading.get_ident())
                 cap.release()
-                logger.info("VideoCapture released for: %s", path)
+                logger.info("[Thread %s] After cap.release()", threading.get_ident())
+            logger.info("[Thread %s] Exiting finally block in load()", threading.get_ident())
 
         logger.info(
             "Ingestion complete: %d frames sampled from %s (%.1fs @ %.1f fps)",
@@ -157,7 +165,7 @@ class VideoIngestor:
             metadata["duration_seconds"],
             metadata["fps"],
         )
-        logger.info("Exiting VideoIngestor.load()")
+        logger.info("[Thread %s] Exiting VideoIngestor.load()", threading.get_ident())
         return frames, metadata
 
     def _validate_extension(self, path: Path) -> None:
@@ -209,6 +217,7 @@ class VideoIngestor:
             issues.append(f"frame_count={frame_count}")
 
         if issues:
+            logger.info("[Thread %s] Before raise VideoCorruptionError (metadata)", threading.get_ident())
             raise VideoCorruptionError(
                 f"Invalid stream metadata for '{path}': " + ", ".join(issues)
             )
@@ -259,6 +268,7 @@ class VideoIngestor:
             if frame is None or frame.size == 0:
                 consecutive_empty += 1
                 if consecutive_empty > MAX_CONSECUTIVE_EMPTY:
+                    logger.info("[Thread %s] Before raise VideoCorruptionError (empty frames)", threading.get_ident())
                     raise VideoCorruptionError(f"Read {MAX_CONSECUTIVE_EMPTY} consecutive empty frames.")
                 continue
             
