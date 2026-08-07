@@ -86,7 +86,7 @@ def _frames_to_video(frames: List[np.ndarray], fps: float) -> str:
     return output_path
 
 
-def _timeline_to_dataframe(timeline: List[TimelineEntry]) -> List[List[Any]]:
+def _timeline_to_dataframe(timeline: List[TimelineEntry]) -> list:
     """Convert timeline entries to a list of lists for gr.DataFrame.
 
     If a frame has no predictions (dummy mode), outputs a row with
@@ -109,7 +109,7 @@ def _timeline_to_dataframe(timeline: List[TimelineEntry]) -> List[List[Any]]:
     return rows
 
 
-def _metadata_to_rows(metadata: Dict[str, Any]) -> List[List[Any]]:
+def _metadata_to_rows(metadata: Dict[str, Any]) -> list:
     """Convert metadata dict to key-value rows for gr.DataFrame."""
     if not metadata:
         return []
@@ -125,7 +125,7 @@ def _metadata_to_rows(metadata: Dict[str, Any]) -> List[List[Any]]:
 
 def process_video(
     video_file: Optional[str],
-) -> Tuple[Optional[str], List[List[Any]], List[List[Any]], str]:
+) -> Tuple[Optional[str], list, list, str]:
     """Gradio callback to run the pipeline on an uploaded video.
 
     Args:
