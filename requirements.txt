@@ -21,6 +21,7 @@ onnxruntime==1.17.1
 # Web App & Visualization
 gradio==4.21.0
 huggingface-hub<0.24.0  # Required by gradio 4.21.0
+jinja2<3.1.4  # Required by gradio 4.21.0 to prevent TypeError: unhashable type: 'dict'
 matplotlib==3.8.3
 plotly==5.19.0
 

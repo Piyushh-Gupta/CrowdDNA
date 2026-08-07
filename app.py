@@ -213,4 +213,10 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    logger.info(f"Starting Gradio server on 0.0.0.0:{port}")
+    try:
+        demo.launch(server_name="0.0.0.0", server_port=port)
+        logger.info("Gradio launch returned normally.")
+    except Exception as e:
+        logger.exception(f"Gradio launch failed with exception: {e}")
+        raise
