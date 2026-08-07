@@ -80,13 +80,23 @@ class VideoIngestor:
         cap = None
         logger.info("Before cv2.VideoCapture(path, cv2.CAP_FFMPEG)")
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                # Force FFMPEG backend to avoid GStreamer deadlocks in headless environments
-                future = executor.submit(cv2.VideoCapture, str(path), cv2.CAP_FFMPEG)
-                try:
-                    cap = future.result(timeout=10.0)
-                except concurrent.futures.TimeoutError:
-                    raise VideoCorruptionError(f"Timeout while opening video: {path}")
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            logger.info("Before executor.submit()")
+            # Force FFMPEG backend to avoid GStreamer deadlocks in headless environments
+            future = executor.submit(cv2.VideoCapture, str(path), cv2.CAP_FFMPEG)
+            logger.info("After executor.submit()")
+            
+            logger.info("Waiting for future.result()")
+            try:
+                cap = future.result(timeout=10.0)
+            except concurrent.futures.TimeoutError:
+                logger.error("Timeout triggered")
+                future.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                logger.info("Executor shutdown complete")
+                raise VideoCorruptionError(f"Timeout while opening video: {path}")
+            
+            executor.shutdown(wait=False)
             
             logger.info("After cv2.VideoCapture, backend selected: %s", cap.getBackendName())
 
@@ -195,12 +205,22 @@ class VideoIngestor:
         frame_index = 0
         
         logger.info("Attempting first cap.read()")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(cap.read)
-            try:
-                ret, frame = future.result(timeout=5.0)
-            except concurrent.futures.TimeoutError:
-                raise VideoCorruptionError("Timeout while attempting to read the first frame.")
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        logger.info("Before executor.submit()")
+        future = executor.submit(cap.read)
+        logger.info("After executor.submit()")
+        
+        logger.info("Waiting for future.result()")
+        try:
+            ret, frame = future.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            logger.error("Timeout triggered")
+            future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            logger.info("Executor shutdown complete")
+            raise VideoCorruptionError("Timeout while attempting to read the first frame.")
+        
+        executor.shutdown(wait=False)
         
         logger.info("After first cap.read() - ret: %s", ret)
         
