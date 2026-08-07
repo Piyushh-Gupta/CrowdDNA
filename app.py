@@ -10,6 +10,7 @@ When the variable is absent, the pipeline runs in dummy mode.
 
 import logging
 import os
+import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -245,6 +246,22 @@ if __name__ == "__main__":
     logger.info("================ STARTUP SEQUENCE ================")
     logger.info(f"PID: {os.getpid()} | __name__ == '__main__'")
     logger.info("Before launch()")
+    
+    if os.environ.get("DEBUG_OPENCV") == "1":
+        logger.info("--- Running DEBUG_OPENCV diagnostic ---")
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "scripts/opencv_render_diagnostic.py"],
+                capture_output=True, text=True, check=False
+            )
+            logger.info("Diagnostic stdout:\n%s", result.stdout)
+            if result.stderr:
+                logger.warning("Diagnostic stderr:\n%s", result.stderr)
+        except Exception as e:
+            logger.exception("Failed to run OpenCV diagnostic: %s", e)
+        logger.info("--- End DEBUG_OPENCV diagnostic ---")
+    
     try:
         demo.launch(server_name="0.0.0.0", server_port=port)
         logger.info("Immediately after launch()")
