@@ -144,18 +144,33 @@ def process_video(
 
     logger.info("[Thread %s] Processing uploaded video: %s", thread_id, video_file)
 
+    logger.info("DEBUG_UPLOAD_VIDEO=%s", os.getenv("DEBUG_UPLOAD_VIDEO"))
+    logger.info("About to evaluate upload diagnostic condition")
+    
     if os.environ.get("DEBUG_UPLOAD_VIDEO") == "1":
-        logger.info("[UPLOAD_DIAGNOSTIC] Running diagnostic on uploaded video...")
+        logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic enabled")
+        logger.info("[UPLOAD_DIAGNOSTIC] Checking if video path exists: %s", video_file)
+        if os.path.exists(video_file):
+            logger.info("[UPLOAD_DIAGNOSTIC] Video file exists.")
+        else:
+            logger.warning("[UPLOAD_DIAGNOSTIC] Video file DOES NOT EXIST: %s", video_file)
+            
+        logger.info("[UPLOAD_DIAGNOSTIC] Immediately before invoking upload_video_diagnostic.py")
         try:
             result = subprocess.run(
                 [sys.executable, "scripts/upload_video_diagnostic.py", video_file],
                 capture_output=True, text=True, check=False
             )
+            logger.info("[UPLOAD_DIAGNOSTIC] Immediately after diagnostic returns")
             logger.info("[UPLOAD_DIAGNOSTIC] stdout:\n%s", result.stdout)
             if result.stderr:
                 logger.warning("[UPLOAD_DIAGNOSTIC] stderr:\n%s", result.stderr)
         except Exception as e:
             logger.exception("[UPLOAD_DIAGNOSTIC] Failed to run diagnostic: %s", e)
+            import traceback
+            logger.error("[UPLOAD_DIAGNOSTIC] Traceback:\n%s", traceback.format_exc())
+    else:
+        logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic disabled")
 
     # Attempt to build an inference-mode pipeline when a model path is configured.
     # Fall back to dummy mode gracefully on any loading error.
