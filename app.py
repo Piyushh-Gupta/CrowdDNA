@@ -134,6 +134,7 @@ def process_video(
     Returns:
         Tuple of (output_video_path, timeline_rows, metadata_rows, status_msg).
     """
+    logger.info("Entering app.process_video()")
     if not video_file:
         return None, [], [], "Please upload a video file."
 
