@@ -206,11 +206,12 @@ class CrowdFlowPipeline:
             metadata["height"],
         )
 
+        thread_id = __import__('threading').get_ident()
         if not frames:
             logger.warning(
-                "No frames sampled from %s — returning empty result.", video_path
+                "[Thread %s] No frames sampled from %s — returning empty result.", thread_id, video_path
             )
-            logger.info("Exiting CrowdFlowPipeline.run() early: no frames")
+            logger.info("[Thread %s] Exiting CrowdFlowPipeline.run() early: no frames", thread_id)
             return PipelineResult(metadata=metadata)
 
         # ----------------------------------------------------------------
@@ -257,8 +258,10 @@ class CrowdFlowPipeline:
                 self._timeline.record(frame_index, predictions)
 
             except CrowdFlowError:
+                logger.info("[Thread %s] run() exception handler: CrowdFlowError on frame %d", thread_id, frame_index)
                 raise
             except Exception as exc:
+                logger.info("[Thread %s] run() exception handler: Unexpected error on frame %d", thread_id, frame_index)
                 raise CrowdFlowError(
                     f"Unexpected error on frame {frame_index}: {exc}"
                 ) from exc
@@ -274,7 +277,7 @@ class CrowdFlowPipeline:
             timeline=self._timeline.get_timeline(),
             metadata=metadata,
         )
-        logger.info("Exiting CrowdFlowPipeline.run() successfully")
+        logger.info("[Thread %s] Exiting CrowdFlowPipeline.run() successfully", thread_id)
         return result
 
     def _process_frame(

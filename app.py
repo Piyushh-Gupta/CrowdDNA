@@ -134,11 +134,13 @@ def process_video(
     Returns:
         Tuple of (output_video_path, timeline_rows, metadata_rows, status_msg).
     """
-    logger.info("Entering app.process_video()")
+    thread_id = __import__('threading').get_ident()
+    logger.info("[Thread %s] Entering app.process_video()", thread_id)
     if not video_file:
+        logger.info("[Thread %s] process_video() return - no video", thread_id)
         return None, [], [], "Please upload a video file."
 
-    logger.info("Processing uploaded video: %s", video_file)
+    logger.info("[Thread %s] Processing uploaded video: %s", thread_id, video_file)
 
     # Attempt to build an inference-mode pipeline when a model path is configured.
     # Fall back to dummy mode gracefully on any loading error.
@@ -156,13 +158,16 @@ def process_video(
     try:
         result = pipeline.run(video_file)
     except CrowdFlowError as exc:
-        logger.error("Pipeline failed: %s", exc)
+        logger.error("[Thread %s] Pipeline failed: %s", thread_id, exc)
+        logger.info("[Thread %s] process_video() return - CrowdFlowError", thread_id)
         return None, [], [], f"Error: {exc}"
     except Exception as exc:
-        logger.exception("Unexpected error during pipeline run.")
+        logger.exception("[Thread %s] Unexpected error during pipeline run.", thread_id)
+        logger.info("[Thread %s] process_video() return - unexpected exception", thread_id)
         return None, [], [], f"Error: Unexpected failure: {exc}"
 
     if not result.annotated_frames:
+        logger.info("[Thread %s] process_video() return - no annotated frames", thread_id)
         return None, [], [], "Error: Pipeline returned no frames."
 
     # Use the effective FPS for the sampled frames to maintain normal speed playback
@@ -173,6 +178,8 @@ def process_video(
     try:
         output_path = _frames_to_video(result.annotated_frames, effective_fps)
     except CrowdFlowError as exc:
+        logger.error("[Thread %s] _frames_to_video CrowdFlowError", thread_id)
+        logger.info("[Thread %s] process_video() return - frames to video error", thread_id)
         return None, [], [], f"Error: {exc}"
 
     timeline_data = _timeline_to_dataframe(result.timeline)
@@ -187,6 +194,8 @@ def process_video(
         )
     else:
         status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
+    
+    logger.info("[Thread %s] process_video() return - success", thread_id)
     return output_path, timeline_data, metadata_data, status_msg
 
 
@@ -241,5 +250,6 @@ if __name__ == "__main__":
         logger.info("Immediately after launch()")
         logger.info("After launch returns")
     except Exception as e:
+        logger.info("[Thread %s] Gradio launch exception caught", __import__('threading').get_ident())
         logger.exception(f"Gradio launch failed with exception: {e}")
         raise
