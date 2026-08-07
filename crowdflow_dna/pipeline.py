@@ -192,7 +192,7 @@ class CrowdFlowPipeline:
             ModelInferenceError: If the runtime raises during inference.
             CrowdFlowError: For any other unexpected failure inside the loop.
         """
-        logger.info("Pipeline starting for: %s", video_path)
+        logger.info("Entering CrowdFlowPipeline.run() for video: %s", video_path)
 
         # ----------------------------------------------------------------
         # Stage 1: Ingestion
@@ -210,6 +210,7 @@ class CrowdFlowPipeline:
             logger.warning(
                 "No frames sampled from %s — returning empty result.", video_path
             )
+            logger.info("Exiting CrowdFlowPipeline.run() early: no frames")
             return PipelineResult(metadata=metadata)
 
         # ----------------------------------------------------------------
@@ -273,9 +274,7 @@ class CrowdFlowPipeline:
             timeline=self._timeline.get_timeline(),
             metadata=metadata,
         )
-        logger.info(
-            "Pipeline complete: %d annotated frames produced.", len(annotated_frames)
-        )
+        logger.info("Exiting CrowdFlowPipeline.run() successfully")
         return result
 
     def _process_frame(
