@@ -10,6 +10,7 @@ When the variable is absent, the pipeline runs in dummy mode.
 
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 from typing import Any, Dict, List, Optional, Tuple
@@ -142,6 +143,19 @@ def process_video(
         return None, [], [], "Please upload a video file."
 
     logger.info("[Thread %s] Processing uploaded video: %s", thread_id, video_file)
+
+    if os.environ.get("DEBUG_UPLOAD_VIDEO") == "1":
+        logger.info("[UPLOAD_DIAGNOSTIC] Running diagnostic on uploaded video...")
+        try:
+            result = subprocess.run(
+                [sys.executable, "scripts/upload_video_diagnostic.py", video_file],
+                capture_output=True, text=True, check=False
+            )
+            logger.info("[UPLOAD_DIAGNOSTIC] stdout:\n%s", result.stdout)
+            if result.stderr:
+                logger.warning("[UPLOAD_DIAGNOSTIC] stderr:\n%s", result.stderr)
+        except Exception as e:
+            logger.exception("[UPLOAD_DIAGNOSTIC] Failed to run diagnostic: %s", e)
 
     # Attempt to build an inference-mode pipeline when a model path is configured.
     # Fall back to dummy mode gracefully on any loading error.
