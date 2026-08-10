@@ -148,20 +148,20 @@ def process_video(
         logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic enabled")
         try:
             import sys
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-            from scripts.render_upload_diagnostic import run_render_upload_diagnostic, get_rss_mb
-            
-            rss_before = get_rss_mb()
-            if rss_before is not None:
-                logger.info(f"[UPLOAD_DIAGNOSTIC] RSS before diagnostic: {rss_before:.2f} MB")
-                
+            import subprocess
             logger.info(f"[UPLOAD_DIAGNOSTIC] Uploaded path: {video_file}")
             
-            run_render_upload_diagnostic(video_file)
+            # Run the diagnostic out-of-process to protect the Gradio worker
+            result = subprocess.run(
+                [sys.executable, "scripts/render_upload_diagnostic.py", video_file],
+                capture_output=True, text=True, check=False
+            )
             
-            rss_after = get_rss_mb()
-            if rss_after is not None:
-                logger.info(f"[UPLOAD_DIAGNOSTIC] RSS after diagnostic: {rss_after:.2f} MB")
+            logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic return code: %s", result.returncode)
+            if result.stdout:
+                logger.info("[UPLOAD_DIAGNOSTIC] stdout:\n%s", result.stdout)
+            if result.stderr:
+                logger.warning("[UPLOAD_DIAGNOSTIC] stderr:\n%s", result.stderr)
                 
         except Exception as e:
             logger.error(f"[UPLOAD_DIAGNOSTIC] Diagnostic interrupted by exception: {e}")
