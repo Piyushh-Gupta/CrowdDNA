@@ -162,6 +162,18 @@ def run_render_upload_diagnostic(video_path: str):
         update_peak()
 
         # Stage C
+        ffprobe_path = shutil.which("ffprobe")
+        ffmpeg_path = shutil.which("ffmpeg")
+        logger.info(f"shutil.which('ffprobe'): {ffprobe_path}")
+        logger.info(f"shutil.which('ffmpeg'): {ffmpeg_path}")
+        
+        if ffprobe_path:
+            res = subprocess.run(["ffprobe", "-version"], capture_output=True, text=True)
+            logger.info(f"ffprobe -version:\n{res.stdout[:200]}")
+        if ffmpeg_path:
+            res = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+            logger.info(f"ffmpeg -version:\n{res.stdout[:200]}")
+
         with StageTracker("FFPROBE"):
             try:
                 cmd = [
@@ -184,6 +196,12 @@ def run_render_upload_diagnostic(video_path: str):
                     try:
                         probe_data = json.loads(stdout_trunc)
                         logger.info(f"ffprobe data: {json.dumps(probe_data)}")
+                        
+                        streams = probe_data.get("streams", [])
+                        if streams:
+                            width = streams[0].get("width", 0)
+                            height = streams[0].get("height", 0)
+                            
                     except Exception as e:
                         logger.error(f"Failed to parse ffprobe json: {e}")
                 else:
@@ -199,115 +217,70 @@ def run_render_upload_diagnostic(video_path: str):
 
         # Stage D
         with StageTracker("FFMPEG_DECODE"):
-            out_img = os.path.join(tempfile.gettempdir(), f"diagnostic_frame_{os.getpid()}.jpg")
             try:
-                if os.path.exists(out_img):
-                    os.remove(out_img)
-                    
-                cmd = [
-                    "ffmpeg",
-                    "-v", "error",
-                    "-y",
-                    "-i", video_path,
-                    "-frames:v", "1",
-                    out_img
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-                
-                stderr_trunc = result.stderr[:8192] if result.stderr else ""
-                
-                if result.returncode == 0 and os.path.exists(out_img):
-                    results["ffmpeg"] = "PASS"
-                    logger.info("FFmpeg extracted 1 frame successfully.")
-                    logger.info(f"Output size: {os.path.getsize(out_img)} bytes")
+                if not width or not height:
+                    logger.warning("Width/height unknown, cannot test raw byte decode accurately.")
                 else:
-                    results["ffmpeg"] = "FAIL"
-                    logger.error(f"FFmpeg failed (exit code {result.returncode})")
-                    logger.error(f"stderr: {stderr_trunc}")
+                    cmd = [
+                        "ffmpeg",
+                        "-v", "error",
+                        "-i", video_path,
+                        "-f", "image2pipe",
+                        "-pix_fmt", "bgr24",
+                        "-vcodec", "rawvideo",
+                        "-"
+                    ]
+                    process = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+                    
+                    frame_bytes = width * height * 3
+                    
+                    def watchdog():
+                        start = time.time()
+                        while process.poll() is None:
+                            if time.time() - start > 15.0:
+                                process.terminate()
+                                time.sleep(0.5)
+                                if process.poll() is None:
+                                    process.kill()
+                                break
+                            time.sleep(0.1)
+
+                    wd_thread = threading.Thread(target=watchdog, daemon=True)
+                    wd_thread.start()
+                    
+                    raw_frame = b''
+                    bytes_needed = frame_bytes
+                    while bytes_needed > 0:
+                        chunk = process.stdout.read(bytes_needed)
+                        if not chunk:
+                            break
+                        raw_frame += chunk
+                        bytes_needed -= len(chunk)
+                        
+                    stderr_tail = process.stderr.read(8192).decode(errors="replace") if process.stderr else ""
+                    process.stdout.close()
+                    process.stderr.close()
+                    process.wait(timeout=5)
+                    
+                    if len(raw_frame) == frame_bytes:
+                        results["ffmpeg"] = "PASS"
+                        logger.info("FFmpeg extracted 1 frame successfully.")
+                    else:
+                        results["ffmpeg"] = "FAIL"
+                        logger.error(f"Partial or no frame read: {len(raw_frame)} / {frame_bytes}")
+                        logger.error(f"stderr: {stderr_tail}")
             except FileNotFoundError:
                 logger.warning("ffmpeg not found in PATH")
-            except subprocess.TimeoutExpired:
-                results["ffmpeg"] = "FAIL"
-                logger.error("ffmpeg timed out after 15s")
-            finally:
-                if os.path.exists(out_img):
-                    try:
-                        os.remove(out_img)
-                    except Exception:
-                        pass
-        update_peak()
-
-        # Stage E
-        cap = None
-        with StageTracker("OPENCV_OPEN"):
-            import cv2
-            write_checkpoint("OPENCV_OPEN_START", get_rss_mb(), 0, "IN_PROGRESS")
-            
-            t0 = time.time()
-            cap = cv2.VideoCapture(str(video_path), cv2.CAP_FFMPEG)
-            t1 = time.time()
-            
-            logger.info(f"Time inside VideoCapture constructor: {t1 - t0:.4f}s")
-            
-            is_opened = cap.isOpened()
-            logger.info(f"isOpened(): {is_opened}")
-            
-            if is_opened:
-                results["opencv_open"] = "PASS"
-                logger.info(f"backend: {cap.getBackendName()}")
-            else:
-                results["opencv_open"] = "FAIL"
-                raise RuntimeError("OpenCV VideoCapture failed to open file.")
-        update_peak()
-
-        # Stage F
-        with StageTracker("OPENCV_METADATA"):
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            fourcc = cap.get(cv2.CAP_PROP_FOURCC)
-            
-            logger.info(f"FPS: {fps}")
-            logger.info(f"Frame count: {frame_count}")
-            logger.info(f"Width: {width}")
-            logger.info(f"Height: {height}")
-            logger.info(f"FOURCC: {fourcc}")
-            results["opencv_metadata"] = "PASS"
-        update_peak()
-
-        # Stage G
-        with StageTracker("OPENCV_FIRST_READ"):
-            write_checkpoint("OPENCV_FIRST_READ_START", get_rss_mb(), 0, "IN_PROGRESS")
-            logger.info("[RENDER_DIAGNOSTIC] About to execute OpenCV first cap.read()")
-            
-            t0 = time.time()
-            ret, frame = cap.read()
-            t1 = time.time()
-            
-            logger.info(f"Time inside cap.read(): {t1 - t0:.4f}s")
-            logger.info(f"return flag (ret): {ret}")
-            
-            if ret and frame is not None:
-                results["opencv_read"] = "PASS"
-                logger.info(f"frame shape: {frame.shape}")
-            else:
-                results["opencv_read"] = "FAIL"
-                logger.error("cap.read() returned False or None frame")
+            except Exception as e:
+                logger.error(f"FFmpeg subprocess failed: {e}")
         update_peak()
 
     except Exception as e:
         logger.error(f"Diagnostic interrupted by exception: {e}")
         logger.error(traceback.format_exc())
     finally:
-        # Stage H
-        if 'cap' in locals() and cap is not None:
-            try:
-                with StageTracker("OPENCV_RELEASE"):
-                    cap.release()
-                    results["opencv_release"] = "PASS"
-            except Exception as e:
-                logger.error(f"Failed to release cap: {e}")
         update_peak()
         
         final_rss = get_rss_mb() or 0.0
@@ -326,14 +299,6 @@ def run_render_upload_diagnostic(video_path: str):
         print(results["ffprobe"])
         print("\nFFMPEG")
         print(results["ffmpeg"])
-        print("\nOPENCV OPEN")
-        print(results["opencv_open"])
-        print("\nOPENCV METADATA")
-        print(results["opencv_metadata"])
-        print("\nOPENCV FIRST READ")
-        print(results["opencv_read"])
-        print("\nOPENCV RELEASE")
-        print(results["opencv_release"])
         print("\n==================================================\n")
 
 if __name__ == "__main__":
