@@ -5,15 +5,40 @@ import logging
 import mimetypes
 import os
 import subprocess
+import sys
 import time
 import traceback
-
-import cv2
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [UPLOAD_DIAGNOSTIC] %(message)s")
 logger = logging.getLogger(__name__)
 
+def get_rss_mb() -> float:
+    """Returns the current RSS memory usage in MB."""
+    try:
+        with open('/proc/self/statm', 'r') as f:
+            pages = int(f.read().split()[1])
+            page_size = os.sysconf('SC_PAGE_SIZE')
+            return (pages * page_size) / (1024 * 1024)
+    except Exception:
+        pass
+    
+    try:
+        import resource
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            return usage / (1024 * 1024)
+        return usage / 1024
+    except Exception:
+        return 0.0
+
+def log_memory(stage: str):
+    rss = get_rss_mb()
+    logger.info(f"Memory (RSS) before {stage}: {rss:.2f} MB")
+    return rss
+
 def run_diagnostic(video_path: str) -> dict:
+    start_rss = log_memory("imports")
+    
     logger.info(f"Starting diagnostic for: {video_path}")
     results = {
         "ffprobe": "FAIL",
@@ -21,6 +46,7 @@ def run_diagnostic(video_path: str) -> dict:
         "opencv_capture": "FAIL",
         "opencv_read": "FAIL"
     }
+    peak_rss = start_rss
     
     # ---------------------------------------------------------
     # Stage 1 — File Integrity
@@ -55,6 +81,8 @@ def run_diagnostic(video_path: str) -> dict:
         logger.error(f"Stage 1 failed: {e}")
         logger.error(traceback.format_exc())
 
+    peak_rss = max(peak_rss, log_memory("ffprobe"))
+
     # ---------------------------------------------------------
     # Stage 2 — ffprobe
     # ---------------------------------------------------------
@@ -64,40 +92,39 @@ def run_diagnostic(video_path: str) -> dict:
             "ffprobe", 
             "-v", "error", 
             "-select_streams", "v:0", 
-            "-show_entries", "stream=codec_name,profile,pix_fmt,width,height,avg_frame_rate,duration,nb_frames,bit_rate", 
-            "-show_entries", "format=format_name",
+            "-show_entries", "stream=codec_name,width,height,avg_frame_rate,duration", 
             "-of", "json",
             video_path
         ]
         start_time = time.time()
+        # Limit stdout/stderr capture to 16KB to save memory
         result = subprocess.run(cmd, capture_output=True, text=True)
         elapsed = time.time() - start_time
+        
+        stdout_trunc = result.stdout[:16384] if result.stdout else ""
+        stderr_trunc = result.stderr[:16384] if result.stderr else ""
         
         logger.info(f"ffprobe exit code: {result.returncode} (took {elapsed:.4f}s)")
         if result.returncode == 0:
             results["ffprobe"] = "PASS"
-            probe_data = json.loads(result.stdout)
-            format_info = probe_data.get("format", {})
+            probe_data = json.loads(stdout_trunc)
             stream_info = probe_data.get("streams", [{}])[0]
             
-            logger.info(f"Container format: {format_info.get('format_name')}")
             logger.info(f"Codec: {stream_info.get('codec_name')}")
-            logger.info(f"Profile: {stream_info.get('profile')}")
-            logger.info(f"Pixel format: {stream_info.get('pix_fmt')}")
-            logger.info(f"Frame count: {stream_info.get('nb_frames')}")
             logger.info(f"Duration: {stream_info.get('duration')}s")
             logger.info(f"FPS: {stream_info.get('avg_frame_rate')}")
             logger.info(f"Width: {stream_info.get('width')}")
             logger.info(f"Height: {stream_info.get('height')}")
-            logger.info(f"Bitrate: {stream_info.get('bit_rate')}")
         else:
-            logger.error(f"ffprobe failed. stdout: {result.stdout}")
-            logger.error(f"ffprobe failed. stderr: {result.stderr}")
+            logger.error(f"ffprobe failed. stdout: {stdout_trunc}")
+            logger.error(f"ffprobe failed. stderr: {stderr_trunc}")
     except FileNotFoundError:
         logger.error("ffprobe executable not found in PATH.")
     except Exception as e:
         logger.error(f"Stage 2 failed: {e}")
         logger.error(traceback.format_exc())
+
+    peak_rss = max(peak_rss, log_memory("ffmpeg"))
 
     # ---------------------------------------------------------
     # Stage 3 — FFmpeg Decode Test
@@ -120,6 +147,9 @@ def run_diagnostic(video_path: str) -> dict:
         result = subprocess.run(cmd, capture_output=True, text=True)
         elapsed = time.time() - start_time
         
+        stdout_trunc = result.stdout[:16384] if result.stdout else ""
+        stderr_trunc = result.stderr[:16384] if result.stderr else ""
+        
         logger.info(f"ffmpeg exit code: {result.returncode} (took {elapsed:.4f}s)")
         if result.returncode == 0 and os.path.exists(out_img):
             results["ffmpeg"] = "PASS"
@@ -127,8 +157,8 @@ def run_diagnostic(video_path: str) -> dict:
             logger.info(f"Output image exists: {out_img}")
             logger.info(f"Output image size: {os.path.getsize(out_img)} bytes")
         else:
-            logger.error(f"ffmpeg failed. stdout: {result.stdout}")
-            logger.error(f"ffmpeg failed. stderr: {result.stderr}")
+            logger.error(f"ffmpeg failed. stdout: {stdout_trunc}")
+            logger.error(f"ffmpeg failed. stderr: {stderr_trunc}")
             if not os.path.exists(out_img):
                 logger.error(f"Output image was not created: {out_img}")
     except FileNotFoundError:
@@ -143,12 +173,17 @@ def run_diagnostic(video_path: str) -> dict:
             except Exception:
                 pass
 
+    peak_rss = max(peak_rss, log_memory("OpenCV"))
+
     # ---------------------------------------------------------
     # Stage 4 — OpenCV Decode Test
     # ---------------------------------------------------------
     logger.info("--- Stage 4: OpenCV Decode Test ---")
     cap = None
     try:
+        # Lazy import OpenCV to save memory until absolutely needed
+        import cv2
+        
         logger.info(f"OpenCV version: {cv2.__version__}")
         
         start_time = time.time()
@@ -190,6 +225,9 @@ def run_diagnostic(video_path: str) -> dict:
             cap.release()
             logger.info("release() complete.")
 
+    final_rss = log_memory("summary")
+    peak_rss = max(peak_rss, final_rss)
+
     # ---------------------------------------------------------
     # Stage 5 — Compare Results
     # ---------------------------------------------------------
@@ -198,6 +236,7 @@ def run_diagnostic(video_path: str) -> dict:
     logger.info(f"FFmpeg decode:       {results['ffmpeg']}")
     logger.info(f"OpenCV VideoCapture: {results['opencv_capture']}")
     logger.info(f"OpenCV first read:   {results['opencv_read']}")
+    logger.info(f"Peak RSS Memory:     {peak_rss:.2f} MB")
     logger.info("=============================")
 
     return results
