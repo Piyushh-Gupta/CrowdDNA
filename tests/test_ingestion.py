@@ -298,4 +298,3 @@ def test_pipes_closed_on_success(
     list(frames_iter)
     
     process.stdout.close.assert_called_once()
-    process.stderr.close.assert_called_once()

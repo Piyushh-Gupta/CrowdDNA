@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, Tuple, Optional
@@ -245,10 +246,12 @@ class VideoIngestor:
         
         logger.info("[FFMPEG_INGEST] Command/configuration: ffmpeg -i <file> -f image2pipe -pix_fmt bgr24")
         
+        stderr_file = tempfile.TemporaryFile()
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=frame_bytes * 2
+            cmd, stdout=subprocess.PIPE, stderr=stderr_file, bufsize=frame_bytes * 2
         )
         logger.info("[FFMPEG_INGEST] Process started (PID: %d)", process.pid)
+        logger.info("[FFMPEG_INGEST] Waiting for first frame bytes...")
 
         frame_index = 0
 
@@ -272,9 +275,18 @@ class VideoIngestor:
                 if len(raw_frame) != frame_bytes:
                     raise VideoCorruptionError(f"Partial frame read: {len(raw_frame)} / {frame_bytes} bytes. Subprocess may have crashed.")
 
+                if frame_index == 0:
+                    logger.info("[FFMPEG_INGEST] First complete raw frame received (size: %d bytes)", len(raw_frame))
+
                 if frame_index % sample_rate == 0:
                     frame_array = np.frombuffer(raw_frame, dtype=np.uint8).reshape((height, width, 3))
                     frame_array = frame_array.copy()
+                    
+                    if frame_index == 0:
+                        logger.info("[FFMPEG_INGEST] First sampled frame yielded")
+                    elif frame_index % (sample_rate * 50) == 0:
+                        logger.info("[FFMPEG_INGEST] Yielding sampled frame index %d", frame_index)
+                        
                     yield frame_array
                 
                 # raw_frame buffer is discarded, memory reclaimed
@@ -283,11 +295,13 @@ class VideoIngestor:
 
         finally:
             # Clean up subprocess guarantees
+            logger.info("[FFMPEG_INGEST] Decoder completed iteration, starting cleanup")
             try:
                 stderr_tail = ""
-                if process.stderr:
-                    stderr_tail = process.stderr.read(8192).decode(errors="replace")
-                    process.stderr.close()
+                if stderr_file:
+                    stderr_file.seek(0)
+                    stderr_tail = stderr_file.read().decode(errors="replace")
+                    stderr_file.close()
                 if process.stdout:
                     process.stdout.close()
                 
