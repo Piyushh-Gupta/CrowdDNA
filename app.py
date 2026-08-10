@@ -10,16 +10,11 @@ When the variable is absent, the pipeline runs in dummy mode.
 
 import logging
 import os
-import subprocess
-import sys
-import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
 import gradio as gr
 import gradio.networking
 import gradio_client.utils as client_utils
-import numpy as np
 
 from crowdflow_dna.errors import CrowdFlowError
 from crowdflow_dna.inference import ModelNotFoundError, UnsupportedModelFormatError
@@ -48,44 +43,6 @@ client_utils._json_schema_to_python_type = _patched_schema_to_python
 
 
 
-
-def _frames_to_video(frames: List[np.ndarray], fps: float) -> str:
-    """Convert a list of BGR frames to an MP4 video file.
-
-    Args:
-        frames: List of BGR numpy arrays. Must not be empty.
-        fps: The effective frames per second for the output video.
-
-    Returns:
-        String path to the temporary MP4 file.
-
-    Raises:
-        CrowdFlowError: If the frame list is empty or VideoWriter fails.
-    """
-    if not frames:
-        raise CrowdFlowError("Cannot create video: no frames provided.")
-
-    height, width = frames[0].shape[:2]
-    
-    # Create a temporary file that Gradio can read later.
-    # Windows compatibility: close the file handle so cv2 can open it.
-    temp_file = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    output_path = temp_file.name
-    temp_file.close()
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    
-    if not out.isOpened():
-        raise CrowdFlowError(f"Failed to open VideoWriter for {output_path}")
-
-    try:
-        for frame in frames:
-            out.write(frame)
-    finally:
-        out.release()
-
-    return output_path
 
 
 def _timeline_to_dataframe(timeline: List[TimelineEntry]) -> list:
@@ -144,29 +101,6 @@ def process_video(
 
     logger.info("[Thread %s] Processing uploaded video: %s", thread_id, video_file)
 
-    if os.environ.get("DEBUG_UPLOAD_VIDEO") == "1":
-        logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic enabled")
-        try:
-            import sys
-            import subprocess
-            logger.info(f"[UPLOAD_DIAGNOSTIC] Uploaded path: {video_file}")
-            
-            # Run the diagnostic out-of-process to protect the Gradio worker
-            result = subprocess.run(
-                [sys.executable, "scripts/minimal_diagnostic.py", video_file],
-                capture_output=True, text=True, check=False
-            )
-            
-            logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic return code: %s", result.returncode)
-            if result.stdout:
-                logger.info("[UPLOAD_DIAGNOSTIC] stdout:\n%s", result.stdout)
-            if result.stderr:
-                logger.warning("[UPLOAD_DIAGNOSTIC] stderr:\n%s", result.stderr)
-                
-        except Exception as e:
-            logger.error(f"[UPLOAD_DIAGNOSTIC] Diagnostic interrupted by exception: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
 
     # Attempt to build an inference-mode pipeline when a model path is configured.
     # Fall back to dummy mode gracefully on any loading error.
@@ -192,21 +126,11 @@ def process_video(
         logger.info("[Thread %s] process_video() return - unexpected exception", thread_id)
         return None, [], [], f"Error: Unexpected failure: {exc}"
 
-    if not result.annotated_frames:
-        logger.info("[Thread %s] process_video() return - no annotated frames", thread_id)
-        return None, [], [], "Error: Pipeline returned no frames."
+    if not getattr(result, "output_video_path", None):
+        logger.info("[Thread %s] process_video() return - no output video generated", thread_id)
+        return None, [], [], "Error: Pipeline did not generate an output video."
 
-    # Use the effective FPS for the sampled frames to maintain normal speed playback
-    fps = result.metadata.get("fps", 30.0)
-    sample_rate = result.metadata.get("sample_rate", 1)
-    effective_fps = max(1.0, float(fps) / float(sample_rate))
-
-    try:
-        output_path = _frames_to_video(result.annotated_frames, effective_fps)
-    except CrowdFlowError as exc:
-        logger.error("[Thread %s] _frames_to_video CrowdFlowError", thread_id)
-        logger.info("[Thread %s] process_video() return - frames to video error", thread_id)
-        return None, [], [], f"Error: {exc}"
+    output_path = result.output_video_path
 
     timeline_data = _timeline_to_dataframe(result.timeline)
     metadata_data = _metadata_to_rows(result.metadata)
@@ -272,20 +196,6 @@ if __name__ == "__main__":
     logger.info(f"PID: {os.getpid()} | __name__ == '__main__'")
     logger.info("Before launch()")
     
-    if os.environ.get("DEBUG_OPENCV") == "1":
-        logger.info("--- Running DEBUG_OPENCV diagnostic ---")
-        try:
-            import subprocess
-            result = subprocess.run(
-                [sys.executable, "scripts/opencv_render_diagnostic.py"],
-                capture_output=True, text=True, check=False
-            )
-            logger.info("Diagnostic stdout:\n%s", result.stdout)
-            if result.stderr:
-                logger.warning("Diagnostic stderr:\n%s", result.stderr)
-        except Exception as e:
-            logger.exception("Failed to run OpenCV diagnostic: %s", e)
-        logger.info("--- End DEBUG_OPENCV diagnostic ---")
     
     try:
         demo.launch(server_name="0.0.0.0", server_port=port)

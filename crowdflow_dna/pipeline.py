@@ -21,18 +21,20 @@ neutral grey. This satisfies the Phase 7/8 Definition of Done.
 """
 
 import logging
+import os
+import shutil
+import subprocess
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-try:
-    import torch
-    from torch_geometric.data import Data
-    _PYG_AVAILABLE = True
-except ImportError:
-    _PYG_AVAILABLE = False
+
+
+
 
 from crowdflow_dna import config
 from crowdflow_dna.detection.detector import Yolov8Detector
@@ -53,6 +55,26 @@ from crowdflow_dna.rendering.timeline import TimelineBuilder, TimelineEntry
 from crowdflow_dna.rendering.video_renderer import FrameAnnotator
 from crowdflow_dna.schemas import RiskPrediction, TrackItem
 from crowdflow_dna.tracking.tracker import ByteTracker
+
+try:
+    import torch
+    from torch_geometric.data import Data
+    _PYG_AVAILABLE = True
+except ImportError:
+    _PYG_AVAILABLE = False
+
+def get_rss_mb() -> Optional[float]:
+    """Return process RSS in MB on Linux, or None if unavailable."""
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return float(parts[1]) / 1024.0
+    except Exception:
+        pass
+    return None
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +106,7 @@ class PipelineResult:
             ``duration_seconds``, and ``sample_rate``.
     """
 
-    annotated_frames: List[np.ndarray] = field(default_factory=list)
+    output_video_path: str = ""
     timeline: List[TimelineEntry] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -151,25 +173,18 @@ class CrowdFlowPipeline:
                 incompatible.
         """
         self._ingestor = VideoIngestor()
-        self._detector = Yolov8Detector()
-        self._tracker = ByteTracker()
-        self._annotator = FrameAnnotator()
-        self._timeline = TimelineBuilder()
-
+        
+        # Heavy components are deferred until run()
+        self._detector: Optional[Yolov8Detector] = None
+        self._tracker: Optional[ByteTracker] = None
+        self._annotator: Optional[FrameAnnotator] = None
+        self._timeline: Optional[TimelineBuilder] = None
         self._runtime: Optional[InferenceRuntime] = None
         self._seq_buffer: Optional[SequenceBuffer] = None
 
-        if model_path is not None:
-            self._runtime = InferenceRuntime()
-            self._runtime.load_model(model_path, version=model_version)
-            self._seq_buffer = SequenceBuffer(window_size=window_size)
-            logger.info(
-                "CrowdFlowPipeline initialised in inference mode: %s (window=%d)",
-                model_path,
-                window_size,
-            )
-        else:
-            logger.info("CrowdFlowPipeline initialised in dummy mode (no model).")
+        self._model_path = model_path
+        self._model_version = model_version
+        self._window_size = window_size
 
     def run(self, video_path: str) -> PipelineResult:
         """Process a video file end-to-end.
@@ -190,29 +205,60 @@ class CrowdFlowPipeline:
             UploadSizeExceededError: If the file exceeds size/duration limits.
             VideoCorruptionError: If the file cannot be opened or read.
             ModelInferenceError: If the runtime raises during inference.
-            CrowdFlowError: For any other unexpected failure inside the loop.
+            CrowdFlowError: For any other unexpected failure during processing.
         """
         logger.info("Entering CrowdFlowPipeline.run() for video: %s", video_path)
 
+        ingestion_timeout = float(getattr(config, "INGESTION_TIMEOUT_SECONDS", 120))
+        deadline = time.monotonic() + ingestion_timeout
+
         # ----------------------------------------------------------------
-        # Stage 1: Ingestion
+        # Stage 1: Ingestion (Streaming Metadata & Iterator)
         # ----------------------------------------------------------------
-        frames, metadata = self._ingestor.load(video_path)
+        frames_iterator, metadata = self._ingestor.load(video_path, deadline)
         logger.info(
-            "Ingestion complete: %d frames, %.1f fps, %dx%d",
-            len(frames),
+            "Ingestion metadata ready: %.1f fps, %dx%d",
             metadata["fps"],
             metadata["width"],
             metadata["height"],
         )
 
         thread_id = __import__('threading').get_ident()
-        if not frames:
-            logger.warning(
-                "[Thread %s] No frames sampled from %s — returning empty result.", thread_id, video_path
+
+        # ----------------------------------------------------------------
+        # Stage 1.5: Deferred Initialization of Heavy Models
+        # ----------------------------------------------------------------
+        rss_before_init = get_rss_mb()
+        if rss_before_init is not None:
+            logger.info("[PIPELINE_MEM] RSS before heavy model init: %.2f MB", rss_before_init)
+
+        if self._detector is None:
+            logger.info("Initialising heavy pipeline components (Detector, Tracker, Models)...")
+            self._detector = Yolov8Detector()
+        if self._tracker is None:
+            self._tracker = ByteTracker()
+        if self._annotator is None:
+            self._annotator = FrameAnnotator()
+        if self._timeline is None:
+            self._timeline = TimelineBuilder()
+            
+        if self._model_path is not None and self._runtime is None:
+            self._runtime = InferenceRuntime()
+            self._runtime.load_model(self._model_path, version=self._model_version)
+            self._seq_buffer = SequenceBuffer(window_size=self._window_size)
+            logger.info(
+                "CrowdFlowPipeline initialised in inference mode: %s (window=%d)",
+                self._model_path,
+                self._window_size,
             )
-            logger.info("[Thread %s] Exiting CrowdFlowPipeline.run() early: no frames", thread_id)
-            return PipelineResult(metadata=metadata)
+        elif self._model_path is None and self._runtime is None:
+            logger.info("CrowdFlowPipeline initialised in dummy mode (no model).")
+
+        rss_after_init = get_rss_mb()
+        if rss_after_init is not None:
+            logger.info("[PIPELINE_MEM] RSS after heavy model init: %.2f MB", rss_after_init)
+            if rss_before_init is not None:
+                logger.info("[PIPELINE_MEM] Model init memory cost: %.2f MB", rss_after_init - rss_before_init)
 
         # ----------------------------------------------------------------
         # Stage 2: Build GraphBuilder with normalised proximity radius
@@ -244,27 +290,130 @@ class CrowdFlowPipeline:
         if self._seq_buffer is not None:
             self._seq_buffer.reset()
 
-        annotated_frames: List[np.ndarray] = []
+        # ----------------------------------------------------------------
+        # Stage 3.5: Set up FFmpeg Output Encoder
+        # ----------------------------------------------------------------
+        if not shutil.which("ffmpeg"):
+            raise CrowdFlowError("ffmpeg executable not found in PATH for encoding output.")
+
+        # Calculate effective output FPS based on sample rate
+        input_fps = float(metadata["fps"])
+        sample_rate = int(metadata["sample_rate"])
+        output_fps = input_fps / sample_rate if sample_rate > 0 else input_fps
+        output_fps = max(1.0, output_fps)
+
+        fd, output_path = tempfile.mkstemp(suffix=".mp4")
+        os.close(fd)
+
+        encoder_cmd = [
+            "ffmpeg",
+            "-y",
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{width}x{height}",
+            "-r", str(output_fps),
+            "-i", "-", # Stdin
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            output_path
+        ]
+        
+        encoder_process = subprocess.Popen(
+            encoder_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+        )
+
+        frames_processed = 0
+        rss_before_first_frame = get_rss_mb()
+        if rss_before_first_frame is not None:
+            logger.info("[PIPELINE_MEM] RSS before first frame processing: %.2f MB", rss_before_first_frame)
 
         # ----------------------------------------------------------------
-        # Stage 4: Per-frame loop
+        # Stage 4: Per-frame Incremental Loop
         # ----------------------------------------------------------------
-        for frame_index, frame in enumerate(frames):
-            try:
+        try:
+            for frame_index, frame in enumerate(frames_iterator):
+                if time.monotonic() > deadline:
+                    raise CrowdFlowError("Global deadline exceeded during pipeline processing.")
+
                 annotated, predictions = self._process_frame(
                     frame_index, frame, graph_builder, width, height
                 )
-                annotated_frames.append(annotated)
-                self._timeline.record(frame_index, predictions)
+                
+                # Write directly to encoder stdin
+                if encoder_process.stdin:
+                    try:
+                        encoder_process.stdin.write(annotated.tobytes())
+                    except BrokenPipeError:
+                        stderr_tail = encoder_process.stderr.read().decode(errors="replace") if encoder_process.stderr else ""
+                        raise CrowdFlowError(f"Encoder subprocess died unexpectedly. stderr: {stderr_tail}")
 
-            except CrowdFlowError:
-                logger.info("[Thread %s] run() exception handler: CrowdFlowError on frame %d", thread_id, frame_index)
-                raise
-            except Exception as exc:
-                logger.info("[Thread %s] run() exception handler: Unexpected error on frame %d", thread_id, frame_index)
-                raise CrowdFlowError(
-                    f"Unexpected error on frame {frame_index}: {exc}"
-                ) from exc
+                self._timeline.record(frame_index, predictions)
+                frames_processed += 1
+
+                # Clean up memory explicitly before next iteration
+                del frame
+                del annotated
+                
+                if frames_processed == 1:
+                    rss_after_first_frame = get_rss_mb()
+                    if rss_after_first_frame is not None:
+                        logger.info("[PIPELINE_MEM] RSS after first frame processing: %.2f MB", rss_after_first_frame)
+
+        except CrowdFlowError as exc:
+            logger.error("[Thread %s] run() exception handler: error on frame %d: %s", thread_id, frames_processed, exc)
+            if encoder_process.poll() is None:
+                encoder_process.terminate()
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise
+
+        except Exception as exc:
+            logger.error("[Thread %s] run() exception handler: unexpected error on frame %d: %s", thread_id, frames_processed, exc)
+            if encoder_process.poll() is None:
+                encoder_process.terminate()
+            # Clean up the partial output file
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise CrowdFlowError(f"Unexpected error on frame {frames_processed}: {exc}") from exc
+            
+        finally:
+            # ----------------------------------------------------------------
+            # Stage 5: Teardown Encoder Process
+            # ----------------------------------------------------------------
+            if encoder_process.stdin:
+                encoder_process.stdin.close()
+                
+            try:
+                # Calculate remaining time for encoder to finish writing MP4 trailing metadata
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    remaining = 1.0 # Give it a small grace period to die
+                
+                encoder_process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                logger.error("FFmpeg encoder timed out. Killing process.")
+                encoder_process.kill()
+                encoder_process.wait()
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                raise CrowdFlowError("Encoder timed out finalizing the video.")
+                
+            if encoder_process.stderr:
+                encoder_process.stderr.close()
+
+            if isinstance(encoder_process.returncode, int) and encoder_process.returncode != 0:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                raise CrowdFlowError(f"FFmpeg encoder failed with exit code {encoder_process.returncode}")
+
+        if frames_processed == 0:
+            logger.warning("[Thread %s] No frames processed from iterator.", thread_id)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            return PipelineResult(metadata=metadata, output_video_path="")
 
         # Augment metadata with runtime provenance (contract §7 / Phase 9).
         if self._runtime is not None:
@@ -273,7 +422,7 @@ class CrowdFlowPipeline:
             metadata["model_version"] = self._runtime.model_version
 
         result = PipelineResult(
-            annotated_frames=annotated_frames,
+            output_video_path=output_path,
             timeline=self._timeline.get_timeline(),
             metadata=metadata,
         )

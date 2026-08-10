@@ -9,15 +9,12 @@ fast and independent of YOLO/torch_geometric.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import numpy as np
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app import (
-    _frames_to_video,
     _metadata_to_rows,
     _timeline_to_dataframe,
     process_video,
@@ -43,13 +40,11 @@ def test_process_video_none_input_returns_error_status() -> None:
 
 
 @patch("app.CrowdFlowPipeline")
-@patch("app._frames_to_video")
-def test_process_video_returns_four_tuple(mock_frames_to_vid, mock_pipeline_cls) -> None:
+def test_process_video_returns_four_tuple(mock_pipeline_cls) -> None:
     """process_video must always return exactly 4 elements."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
-        annotated_frames=[np.zeros((10, 10, 3), dtype=np.uint8)]
+        output_video_path="fake_output.mp4"
     )
-    mock_frames_to_vid.return_value = "fake_output.mp4"
     
     result = process_video("fake_input.mp4")
     assert isinstance(result, tuple)
@@ -57,13 +52,11 @@ def test_process_video_returns_four_tuple(mock_frames_to_vid, mock_pipeline_cls)
 
 
 @patch("app.CrowdFlowPipeline")
-@patch("app._frames_to_video")
-def test_process_video_success_returns_video_path(mock_frames_to_vid, mock_pipeline_cls) -> None:
+def test_process_video_success_returns_video_path(mock_pipeline_cls) -> None:
     """On success, the first element must be the output video path string."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
-        annotated_frames=[np.zeros((10, 10, 3), dtype=np.uint8)]
+        output_video_path="success_vid.mp4"
     )
-    mock_frames_to_vid.return_value = "success_vid.mp4"
     
     out_video, _, _, _ = process_video("fake_input.mp4")
     assert out_video == "success_vid.mp4"
@@ -71,13 +64,11 @@ def test_process_video_success_returns_video_path(mock_frames_to_vid, mock_pipel
 
 @patch("app.os.environ.get", return_value=None)
 @patch("app.CrowdFlowPipeline")
-@patch("app._frames_to_video")
-def test_process_video_success_status_contains_ok(mock_frames_to_vid, mock_pipeline_cls, _mock_env) -> None:
+def test_process_video_success_status_contains_ok(mock_pipeline_cls, _mock_env) -> None:
     """On success with no model configured, status must indicate dummy mode."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
-        annotated_frames=[np.zeros((10, 10, 3), dtype=np.uint8)]
+        output_video_path="fake.mp4"
     )
-    mock_frames_to_vid.return_value = "fake.mp4"
 
     _, _, _, status = process_video("fake_input.mp4")
     assert "dummy mode" in status.lower()
@@ -106,37 +97,33 @@ def test_process_video_error_status_contains_message(mock_pipeline_cls) -> None:
 @patch("app.CrowdFlowPipeline")
 def test_process_video_empty_frames_returns_empty_timeline(mock_pipeline_cls) -> None:
     """If pipeline returns no frames, return early without crashing."""
-    mock_pipeline_cls.return_value.run.return_value = PipelineResult(annotated_frames=[])
+    mock_pipeline_cls.return_value.run.return_value = PipelineResult(output_video_path=None)
     
     out_video, tl_rows, md_rows, status = process_video("fake_input.mp4")
     assert out_video is None
     assert tl_rows == []
-    assert "no frames" in status.lower()
+    assert "output video" in status.lower()
 
 
 @patch("app.CrowdFlowPipeline")
-@patch("app._frames_to_video")
-def test_process_video_calls_pipeline_run(mock_frames_to_vid, mock_pipeline_cls) -> None:
+def test_process_video_calls_pipeline_run(mock_pipeline_cls) -> None:
     """The pipeline's run() method must be called with the uploaded path."""
     mock_pipeline = mock_pipeline_cls.return_value
     mock_pipeline.run.return_value = PipelineResult(
-        annotated_frames=[np.zeros((10, 10, 3), dtype=np.uint8)]
+        output_video_path="fake.mp4"
     )
-    mock_frames_to_vid.return_value = "fake.mp4"
     
     process_video("uploaded_test.mp4")
     mock_pipeline.run.assert_called_once_with("uploaded_test.mp4")
 
 
 @patch("app.CrowdFlowPipeline")
-@patch("app._frames_to_video")
-def test_process_video_timeline_row_count_matches_entries(mock_frames_to_vid, mock_pipeline_cls) -> None:
+def test_process_video_timeline_row_count_matches_entries(mock_pipeline_cls) -> None:
     """If dummy mode, row count must equal timeline entry count."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
-        annotated_frames=[np.zeros((10, 10, 3), dtype=np.uint8)],
+        output_video_path="fake.mp4",
         timeline=[TimelineEntry(0), TimelineEntry(1)]
     )
-    mock_frames_to_vid.return_value = "fake.mp4"
     
     _, tl_rows, _, _ = process_video("fake.mp4")
     assert len(tl_rows) == 2
@@ -216,32 +203,6 @@ def test_metadata_to_rows_property_value_columns() -> None:
     for row in rows:
         assert len(row) == 2
 
-
-# ---------------------------------------------------------------------------
-# _frames_to_video()
-# ---------------------------------------------------------------------------
-
-
-def test_frames_to_video_with_zero_frames_raises() -> None:
-    """Empty frame list must raise CrowdFlowError."""
-    with pytest.raises(CrowdFlowError, match="no frames"):
-        _frames_to_video([], fps=30.0)
-
-
-@patch("app.cv2.VideoWriter")
-def test_frames_to_video_creates_file(mock_vw) -> None:
-    """Helper must instantiate cv2.VideoWriter and call write()."""
-    mock_out = MagicMock()
-    mock_out.isOpened.return_value = True
-    mock_vw.return_value = mock_out
-
-    frames = [np.zeros((10, 10, 3), dtype=np.uint8)]
-    
-    path = _frames_to_video(frames, fps=30.0)
-    
-    assert str(path).endswith(".mp4")
-    mock_out.write.assert_called_once()
-    mock_out.release.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

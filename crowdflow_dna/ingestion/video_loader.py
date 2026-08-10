@@ -9,10 +9,9 @@ import logging
 import os
 import shutil
 import subprocess
-import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, Iterator, Tuple, Optional
 
 import numpy as np
 
@@ -53,15 +52,16 @@ class VideoIngestor:
         self.max_duration_seconds = float(config.MAX_DURATION_SECONDS)
         self.frame_sample_rate = config.FRAME_SAMPLE_RATE
 
-    def load(self, video_path: str) -> Tuple[List[np.ndarray], Dict[str, Any]]:
-        """Load, validate, and sample a video file.
+    def load(self, video_path: str, deadline: float) -> Tuple[Iterator[np.ndarray], Dict[str, Any]]:
+        """Load, validate, and yield sampled frames from a video file.
 
         Args:
             video_path: Path to the video file.
+            deadline: time.monotonic() timestamp for the global timeout.
 
         Returns:
-            A tuple of (frames, metadata).
-                - frames: List of sampled np.ndarray frames (BGR).
+            A tuple of (frames_iterator, metadata).
+                - frames_iterator: Iterator yielding sampled np.ndarray frames (BGR).
                 - metadata: Dictionary containing stream metadata.
 
         Raises:
@@ -87,21 +87,20 @@ class VideoIngestor:
         self._validate_file_size(path, size_bytes)
         logger.info("[FFMPEG_INGEST] Input file size valid (%d bytes).", size_bytes)
 
-        metadata = self._extract_metadata_ffprobe(path)
+        metadata = self._extract_metadata_ffprobe(path, deadline)
         logger.info("[FFMPEG_INGEST] Metadata: %s", metadata)
 
         self._validate_duration(metadata["duration_seconds"], path)
 
-        frames = self._sample_frames_ffmpeg(path, metadata)
+        frames_iterator = self._sample_frames_ffmpeg(path, metadata, deadline)
         
         logger.info(
-            "[FFMPEG_INGEST] Cleanup complete. Ingestion complete: %d frames sampled from %s (%.1fs @ %.1f fps)",
-            len(frames),
+            "[FFMPEG_INGEST] Video metadata complete, returning streaming iterator for %s (%.1fs @ %.1f fps)",
             path.name,
             metadata["duration_seconds"],
             metadata["fps"],
         )
-        return frames, metadata
+        return frames_iterator, metadata
 
     def _validate_extension(self, path: Path) -> None:
         ext = path.suffix.lower()
@@ -126,7 +125,7 @@ class VideoIngestor:
                 f"allowed {config.MAX_DURATION_SECONDS}s."
             )
 
-    def _extract_metadata_ffprobe(self, path: Path) -> Dict[str, Any]:
+    def _extract_metadata_ffprobe(self, path: Path, deadline: float) -> Dict[str, Any]:
         """Extract stream metadata using ffprobe."""
         if not shutil.which("ffprobe"):
             raise VideoCorruptionError("ffprobe executable not found in PATH")
@@ -141,8 +140,12 @@ class VideoIngestor:
             str(path)
         ]
 
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            raise VideoCorruptionError("Global deadline exceeded before starting FFprobe.")
+
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             if result.returncode != 0:
                 stderr_trunc = result.stderr[:8192] if result.stderr else ""
                 raise VideoCorruptionError(f"ffprobe failed (exit {result.returncode}): {stderr_trunc}")
@@ -216,11 +219,11 @@ class VideoIngestor:
             "sample_rate": self.frame_sample_rate,
         }
 
-    def _sample_frames_ffmpeg(self, path: Path, metadata: Dict[str, Any]) -> List[np.ndarray]:
-        """Extract and sample frames using an ffmpeg subprocess.
+    def _sample_frames_ffmpeg(self, path: Path, metadata: Dict[str, Any], deadline: float) -> Iterator[np.ndarray]:
+        """Extract and yield sampled frames using an ffmpeg subprocess.
         
         Reads exactly width*height*3 bytes per frame from stdout pipe.
-        Uses an independent watchdog thread to ensure we never block indefinitely.
+        Yields frames lazily to maintain O(1) memory bound.
         """
         if not shutil.which("ffmpeg"):
             raise VideoCorruptionError("ffmpeg executable not found in PATH")
@@ -242,43 +245,18 @@ class VideoIngestor:
         
         logger.info("[FFMPEG_INGEST] Command/configuration: ffmpeg -i <file> -f image2pipe -pix_fmt bgr24")
         
-        rss_start = get_rss_mb()
-        if rss_start is not None:
-            logger.info("[FFMPEG_INGEST] RSS before: %.2f MB", rss_start)
-
-        t0 = time.time()
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=10**7
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=frame_bytes * 2
         )
         logger.info("[FFMPEG_INGEST] Process started (PID: %d)", process.pid)
 
-        timeout_seconds = float(config.MAX_DURATION_SECONDS) + 30.0
-        
-        # Watchdog thread ensures process is killed if it hangs, breaking stdout.read()
-        def watchdog():
-            start = time.time()
-            while process.poll() is None:
-                if time.time() - start > timeout_seconds:
-                    logger.warning("[FFMPEG_INGEST] Timeout detected")
-                    logger.info("[FFMPEG_INGEST] Terminating process")
-                    process.terminate()
-                    time.sleep(1.0)
-                    if process.poll() is None:
-                        logger.info("[FFMPEG_INGEST] Killing process")
-                        process.kill()
-                    break
-                time.sleep(0.5)
-
-        wd_thread = threading.Thread(target=watchdog, daemon=True)
-        wd_thread.start()
-
-        frames = []
         frame_index = 0
-        peak_rss = rss_start or 0.0
 
         try:
             while True:
-                # Read exactly frame_bytes
+                if time.monotonic() > deadline:
+                    raise VideoCorruptionError("Global deadline exceeded during FFmpeg decode")
+
                 raw_frame = b''
                 bytes_needed = frame_bytes
                 while bytes_needed > 0:
@@ -294,65 +272,44 @@ class VideoIngestor:
                 if len(raw_frame) != frame_bytes:
                     raise VideoCorruptionError(f"Partial frame read: {len(raw_frame)} / {frame_bytes} bytes. Subprocess may have crashed.")
 
-                curr_rss = get_rss_mb()
-                if curr_rss and curr_rss > peak_rss:
-                    peak_rss = curr_rss
-
                 if frame_index % sample_rate == 0:
-                    # Convert to numpy array and reshape
                     frame_array = np.frombuffer(raw_frame, dtype=np.uint8).reshape((height, width, 3))
-                    # Make a copy so we don't hold references to a huge contiguous buffer if the OS provides one,
-                    # though frombuffer on a new bytes object is already decoupled. We just use it directly.
                     frame_array = frame_array.copy()
-                    frames.append(frame_array)
-                    
-                    if len(frames) == 1:
-                        logger.info("[FFMPEG_INGEST] First sampled frame received")
-                    else:
-                        logger.debug("[FFMPEG_INGEST] Sample frame received (idx: %d)", frame_index)
+                    yield frame_array
                 
-                # raw_frame buffer is discarded for non-sampled frames here, reclaiming memory
+                # raw_frame buffer is discarded, memory reclaimed
                 del raw_frame
                 frame_index += 1
 
-        except Exception as e:
-            logger.error("[FFMPEG_INGEST] Exception during frame extraction: %s", e)
-            process.terminate()
-            raise
         finally:
-            # Ensure stdout/stderr are closed and process is reaped
+            # Clean up subprocess guarantees
             try:
-                stderr_tail = process.stderr.read(8192).decode(errors="replace") if process.stderr else ""
+                stderr_tail = ""
+                if process.stderr:
+                    stderr_tail = process.stderr.read(8192).decode(errors="replace")
+                    process.stderr.close()
                 if process.stdout:
                     process.stdout.close()
-                if process.stderr:
-                    process.stderr.close()
-                process.wait(timeout=5)
+                
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                else:
+                    process.wait()
             except Exception as e:
                 logger.error("Error closing pipes or waiting for process: %s", e)
                 process.kill()
                 process.wait()
 
-            logger.info("[FFMPEG_INGEST] Process reaped")
+            logger.info("[FFMPEG_INGEST] Process reaped. Return code: %s", process.returncode)
 
-        t1 = time.time()
-        logger.info("[FFMPEG_INGEST] Process completed in %.2f seconds", (t1 - t0))
-        logger.info("[FFMPEG_INGEST] Process return code: %s", process.returncode)
+            if process.returncode != 0 and process.returncode is not None:
+                stderr_trunc = stderr_tail[:8192] if stderr_tail else ""
+                if process.returncode == -15 or process.returncode == -9: # SIGTERM or SIGKILL
+                    raise VideoCorruptionError(f"FFmpeg was killed or terminated. stderr: {stderr_trunc}")
+                raise VideoCorruptionError(f"FFmpeg failed with exit code {process.returncode}. stderr: {stderr_trunc}")
 
-        if process.returncode != 0:
-            stderr_trunc = stderr_tail[:8192] if stderr_tail else ""
-            if process.returncode == -15 or process.returncode == -9: # SIGTERM or SIGKILL
-                raise VideoCorruptionError(f"FFmpeg timed out and was killed. stderr: {stderr_trunc}")
-            raise VideoCorruptionError(f"FFmpeg failed with exit code {process.returncode}. stderr: {stderr_trunc}")
-
-        rss_end = get_rss_mb()
-        if rss_end is not None:
-            logger.info("[FFMPEG_INGEST] RSS after: %.2f MB", rss_end)
-            if rss_start is not None:
-                logger.info("[FFMPEG_INGEST] RSS delta: %.2f MB", rss_end - rss_start)
-            logger.info("[FFMPEG_INGEST] observed peak RSS: %.2f MB", peak_rss)
-
-        if len(frames) == 0:
-            raise VideoCorruptionError("FFmpeg extracted 0 valid frames.")
-
-        return frames

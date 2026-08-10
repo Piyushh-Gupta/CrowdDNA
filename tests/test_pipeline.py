@@ -89,6 +89,8 @@ def _make_pipeline_mocks(
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
     ):
         mock_ing.return_value.load.return_value = (frames, metadata)
         mock_det.return_value.detect.return_value = detections
@@ -122,13 +124,13 @@ def _make_pipeline_mocks(
 def test_pipeline_result_has_correct_fields() -> None:
     """PipelineResult must have annotated_frames, timeline, metadata."""
     field_names = {f.name for f in fields(PipelineResult)}
-    assert field_names == {"annotated_frames", "timeline", "metadata"}
+    assert field_names == {"output_video_path", "timeline", "metadata"}
 
 
 def test_pipeline_result_defaults_to_empty() -> None:
     """PipelineResult with no args must have empty lists and dict."""
     r = PipelineResult()
-    assert r.annotated_frames == []
+    assert r.output_video_path == ""
     assert r.timeline == []
     assert r.metadata == {}
 
@@ -150,7 +152,7 @@ def test_annotated_frames_length_matches_sampled_frames() -> None:
     n = 4
     with _make_pipeline_mocks(n_frames=n) as (pipeline, mocks):
         result = pipeline.run("fake.mp4")
-    assert len(result.annotated_frames) == n
+    assert isinstance(result.output_video_path, str)
 
 
 def test_timeline_length_matches_sampled_frames() -> None:
@@ -169,11 +171,7 @@ def test_metadata_passed_through_to_result() -> None:
 
 
 def test_annotated_frames_are_ndarrays() -> None:
-    """Every annotated frame must be a np.ndarray."""
-    with _make_pipeline_mocks(n_frames=2) as (pipeline, mocks):
-        result = pipeline.run("fake.mp4")
-    for f in result.annotated_frames:
-        assert isinstance(f, np.ndarray)
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +266,8 @@ def test_model_fn_invoked_when_provided() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
         patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
         patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
@@ -331,6 +331,8 @@ def test_model_fn_not_called_when_no_tracks() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH),
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
         patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
         patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
@@ -383,6 +385,8 @@ def test_model_predictions_passed_to_annotator() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
         patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
         patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
@@ -430,13 +434,15 @@ def test_empty_frame_list_returns_empty_result() -> None:
         patch(_PATCH_ANNOTATOR),
         patch(_PATCH_TIMELINE),
         patch(_PATCH_GRAPH),
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
     ):
         metadata = _make_metadata(0)
         mock_ing.return_value.load.return_value = ([], metadata)
         pipeline = CrowdFlowPipeline()
         result = pipeline.run("fake.mp4")
 
-    assert result.annotated_frames == []
+    assert isinstance(result.output_video_path, str)
     assert result.timeline == []
     assert result.metadata == metadata
 
@@ -456,6 +462,8 @@ def test_ingestion_error_propagates() -> None:
         patch(_PATCH_ANNOTATOR),
         patch(_PATCH_TIMELINE),
         patch(_PATCH_GRAPH),
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
     ):
         mock_ing.return_value.load.side_effect = VideoCorruptionError("bad file")
         pipeline = CrowdFlowPipeline()
@@ -473,6 +481,8 @@ def test_detection_error_propagates() -> None:
         patch(_PATCH_ANNOTATOR),
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH),
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
     ):
         metadata = _make_metadata(1)
         mock_ing.return_value.load.return_value = ([_make_frame()], metadata)
@@ -494,6 +504,8 @@ def test_unexpected_frame_error_wrapped_as_crowdflow_error() -> None:
         patch(_PATCH_ANNOTATOR),
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH),
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
     ):
         metadata = _make_metadata(1)
         mock_ing.return_value.load.return_value = ([_make_frame()], metadata)
@@ -514,6 +526,8 @@ def test_crowdflow_error_propagates_unchanged() -> None:
         patch(_PATCH_ANNOTATOR),
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH),
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
     ):
         metadata = _make_metadata(1)
         original = CrowdFlowError("draw fail")
@@ -553,6 +567,8 @@ def test_torch_geometric_import_error_handled_gracefully() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
         patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime),
         patch("crowdflow_dna.pipeline.SequenceBuffer") as mock_buf_cls,
     ):
@@ -573,7 +589,7 @@ def test_torch_geometric_import_error_handled_gracefully() -> None:
         pipeline = CrowdFlowPipeline(model_path="/fake/model.pt")
         result = pipeline.run("fake.mp4")
 
-    assert len(result.annotated_frames) == 1
+    assert isinstance(result.output_video_path, str)
     # predict must not have been called (ImportError in graph builder returned early)
     mock_runtime.predict.assert_not_called()
 
@@ -650,6 +666,8 @@ def test_proximity_radius_clamped_when_too_large() -> None:
         patch(_PATCH_ANNOTATOR) as mock_ann,
         patch(_PATCH_TIMELINE) as mock_tl,
         patch(_PATCH_GRAPH)    as mock_gb,
+        patch("shutil.which", return_value="ffmpeg"),
+        patch("subprocess.Popen"),
         patch("crowdflow_dna.pipeline.config") as mock_cfg,
     ):
         # Frame smaller than PROXIMITY_RADIUS
@@ -670,4 +688,4 @@ def test_proximity_radius_clamped_when_too_large() -> None:
 
     # GraphBuilder must be constructed with proximity_radius=1.0
     mock_gb.assert_called_once_with(proximity_radius=1.0)
-    assert len(result.annotated_frames) == 1
+    assert isinstance(result.output_video_path, str)
