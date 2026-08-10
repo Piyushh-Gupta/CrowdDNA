@@ -321,8 +321,9 @@ class CrowdFlowPipeline:
             output_path
         ]
         
+        encoder_stderr_file = tempfile.TemporaryFile()
         encoder_process = subprocess.Popen(
-            encoder_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+            encoder_cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=encoder_stderr_file
         )
 
         frames_processed = 0
@@ -347,7 +348,8 @@ class CrowdFlowPipeline:
                     try:
                         encoder_process.stdin.write(annotated.tobytes())
                     except BrokenPipeError:
-                        stderr_tail = encoder_process.stderr.read().decode(errors="replace") if encoder_process.stderr else ""
+                        encoder_stderr_file.seek(0)
+                        stderr_tail = encoder_stderr_file.read().decode(errors="replace")
                         raise CrowdFlowError(f"Encoder subprocess died unexpectedly. stderr: {stderr_tail}")
 
                 self._timeline.record(frame_index, predictions)
@@ -401,8 +403,8 @@ class CrowdFlowPipeline:
                     os.remove(output_path)
                 raise CrowdFlowError("Encoder timed out finalizing the video.")
                 
-            if encoder_process.stderr:
-                encoder_process.stderr.close()
+            if encoder_stderr_file:
+                encoder_stderr_file.close()
 
             if isinstance(encoder_process.returncode, int) and encoder_process.returncode != 0:
                 if os.path.exists(output_path):
