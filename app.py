@@ -144,33 +144,29 @@ def process_video(
 
     logger.info("[Thread %s] Processing uploaded video: %s", thread_id, video_file)
 
-    logger.info("DEBUG_UPLOAD_VIDEO=%s", os.getenv("DEBUG_UPLOAD_VIDEO"))
-    logger.info("About to evaluate upload diagnostic condition")
-    
     if os.environ.get("DEBUG_UPLOAD_VIDEO") == "1":
         logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic enabled")
-        logger.info("[UPLOAD_DIAGNOSTIC] Checking if video path exists: %s", video_file)
-        if os.path.exists(video_file):
-            logger.info("[UPLOAD_DIAGNOSTIC] Video file exists.")
-        else:
-            logger.warning("[UPLOAD_DIAGNOSTIC] Video file DOES NOT EXIST: %s", video_file)
-            
-        logger.info("[UPLOAD_DIAGNOSTIC] Immediately before invoking upload_video_diagnostic.py")
         try:
-            result = subprocess.run(
-                [sys.executable, "scripts/upload_video_diagnostic.py", video_file],
-                capture_output=True, text=True, check=False
-            )
-            logger.info("[UPLOAD_DIAGNOSTIC] Immediately after diagnostic returns")
-            logger.info("[UPLOAD_DIAGNOSTIC] stdout:\n%s", result.stdout)
-            if result.stderr:
-                logger.warning("[UPLOAD_DIAGNOSTIC] stderr:\n%s", result.stderr)
+            import sys
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from scripts.render_upload_diagnostic import run_render_upload_diagnostic, get_rss_mb
+            
+            rss_before = get_rss_mb()
+            if rss_before is not None:
+                logger.info(f"[UPLOAD_DIAGNOSTIC] RSS before diagnostic: {rss_before:.2f} MB")
+                
+            logger.info(f"[UPLOAD_DIAGNOSTIC] Uploaded path: {video_file}")
+            
+            run_render_upload_diagnostic(video_file)
+            
+            rss_after = get_rss_mb()
+            if rss_after is not None:
+                logger.info(f"[UPLOAD_DIAGNOSTIC] RSS after diagnostic: {rss_after:.2f} MB")
+                
         except Exception as e:
-            logger.exception("[UPLOAD_DIAGNOSTIC] Failed to run diagnostic: %s", e)
+            logger.error(f"[UPLOAD_DIAGNOSTIC] Diagnostic interrupted by exception: {e}")
             import traceback
-            logger.error("[UPLOAD_DIAGNOSTIC] Traceback:\n%s", traceback.format_exc())
-    else:
-        logger.info("[UPLOAD_DIAGNOSTIC] Diagnostic disabled")
+            logger.error(traceback.format_exc())
 
     # Attempt to build an inference-mode pipeline when a model path is configured.
     # Fall back to dummy mode gracefully on any loading error.
