@@ -245,29 +245,37 @@ class TestPipelineDummyMode:
         assert p._runtime is None
         assert p._seq_buffer is None
 
-    def test_runtime_loaded_on_valid_model_path(self, tmp_path):
-        """Providing a real .pt file that exists should trigger runtime load."""
-        fake_model = tmp_path / "model.pt"
-        fake_model.touch()
+    @patch("crowdflow_dna.pipeline.InferenceRuntime")
+    def test_runtime_loaded_on_valid_model_path(self, mock_runtime: MagicMock) -> None:
+        pipeline = CrowdFlowPipeline(model_path="dummy_path.pt")
+        pipeline._ingestor = MagicMock()
+        pipeline._ingestor.load.return_value = ([], {"fps": 30.0, "width": 640, "height": 480, "sample_rate": 1})
+        # Note: initialization is deferred to run()
+        with patch("shutil.which", return_value="ffmpeg"), patch("subprocess.Popen"):
+            pipeline.run("video.mp4")
+        mock_runtime.assert_called_once()
+        mock_instance = mock_runtime.return_value
+        mock_instance.load_model.assert_called_once_with("dummy_path.pt", version=None)
 
-        mock_runtime = MagicMock()
-        with patch("crowdflow_dna.pipeline.InferenceRuntime", return_value=mock_runtime):
-            p = CrowdFlowPipeline(model_path=str(fake_model))
-
-        mock_runtime.load_model.assert_called_once_with(
-            str(fake_model), version=None
-        )
-        assert p._runtime is mock_runtime
-
-    def test_raises_on_missing_model_path(self):
+    def test_raises_on_missing_model_path(self) -> None:
         with pytest.raises(ModelNotFoundError):
-            CrowdFlowPipeline(model_path="/non/existent/model.pt")
+            pipeline = CrowdFlowPipeline(model_path="missing_model.pt")
+            pipeline._ingestor = MagicMock()
+            pipeline._ingestor.load.return_value = ([], {"fps": 30.0, "width": 640, "height": 480, "sample_rate": 1})
+            with patch("shutil.which", return_value="ffmpeg"), patch("subprocess.Popen"):
+                pipeline.run("video.mp4")
 
-    def test_raises_on_unsupported_extension(self, tmp_path):
-        bad_file = tmp_path / "model.h5"
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_raises_on_unsupported_extension(self, mock_which, mock_popen, tmp_path) -> None:
+        bad_file = tmp_path / "model.txt"
         bad_file.touch()
         with pytest.raises(UnsupportedModelFormatError):
-            CrowdFlowPipeline(model_path=str(bad_file))
+            pipeline = CrowdFlowPipeline(model_path=str(bad_file))
+            pipeline._ingestor = MagicMock()
+            pipeline._ingestor.load.return_value = ([], {"fps": 30.0, "width": 640, "height": 480, "sample_rate": 1})
+            with patch("shutil.which", return_value="ffmpeg"), patch("subprocess.Popen"):
+                pipeline.run("video.mp4")
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +296,9 @@ class TestPipelineInferenceIntegration:
         mock_runtime.predict.return_value = mock_predict_return
 
         pipeline = CrowdFlowPipeline.__new__(CrowdFlowPipeline)
+        pipeline._model_path = "mock.pt"
+        pipeline._model_version = None
+        pipeline._window_size = window_size
         pipeline._ingestor = MagicMock()
         pipeline._detector = MagicMock()
         pipeline._tracker = MagicMock()
@@ -308,7 +319,9 @@ class TestPipelineInferenceIntegration:
         pipeline._ingestor.load.return_value = (frames, metadata)
         return frames, metadata
 
-    def test_inference_fires_after_warmup(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_inference_fires_after_warmup(self, mock_which, mock_popen):
         """predict() must be called only after window_size frames are buffered."""
         inf_result = _mock_inference_result(0)
         pipeline = self._build_pipeline_with_mocked_runtime(inf_result, window_size=3)
@@ -328,7 +341,11 @@ class TestPipelineInferenceIntegration:
         # deque(maxlen=3): ready from frame index 2 onwards → 3 predict calls (frames 2, 3, 4)
         assert pipeline._runtime.predict.call_count == 3
 
-    def test_warmup_frames_produce_no_predictions(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_warmup_frames_produce_no_predictions(
+        self, mock_which, mock_popen
+    ):
         """Frames before the buffer is full must return empty predictions."""
         inf_result = _mock_inference_result(1)
         pipeline = self._build_pipeline_with_mocked_runtime(inf_result, window_size=10)
@@ -345,7 +362,9 @@ class TestPipelineInferenceIntegration:
         pipeline.run("dummy.mp4")
         pipeline._runtime.predict.assert_not_called()
 
-    def test_empty_track_frame_does_not_crash(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_empty_track_frame_does_not_crash(self, mock_which, mock_popen):
         """A frame with zero tracks must not raise."""
         inf_result = _mock_inference_result(0)
         pipeline = self._build_pipeline_with_mocked_runtime(inf_result, window_size=2)
@@ -361,7 +380,9 @@ class TestPipelineInferenceIntegration:
         # Must not raise
         pipeline.run("dummy.mp4")
 
-    def test_inference_error_raises_model_inference_error(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_inference_error_raises_model_inference_error(self, mock_which, mock_popen):
         """InferenceExecutionError from the runtime must propagate as ModelInferenceError."""
         from crowdflow_dna.errors import ModelInferenceError
 
@@ -380,7 +401,9 @@ class TestPipelineInferenceIntegration:
         with pytest.raises(ModelInferenceError, match="InferenceRuntime failed"):
             pipeline.run("dummy.mp4")
 
-    def test_risk_predictions_reach_annotator(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_risk_predictions_reach_annotator(self, mock_which, mock_popen):
         """Verify that RiskPrediction objects are forwarded to FrameAnnotator."""
         inf_result = _mock_inference_result(2)  # Critical
         pipeline = self._build_pipeline_with_mocked_runtime(inf_result, window_size=1)
@@ -411,7 +434,9 @@ class TestPipelineInferenceIntegration:
             for p in preds:
                 assert p.label == "Critical"
 
-    def test_pipeline_result_structure(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_pipeline_result_structure(self, mock_which, mock_popen):
         """PipelineResult must contain frames, timeline, and metadata."""
         inf_result = _mock_inference_result(0)
         pipeline = self._build_pipeline_with_mocked_runtime(inf_result, window_size=2)
@@ -428,10 +453,12 @@ class TestPipelineInferenceIntegration:
         result = pipeline.run("dummy.mp4")
 
         assert isinstance(result, PipelineResult)
-        assert len(result.annotated_frames) == n_frames
+        assert isinstance(result.output_video_path, str)
         assert result.metadata["fps"] == pytest.approx(30.0)
 
-    def test_buffer_reset_between_runs(self):
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_buffer_reset_between_runs(self, mock_which, mock_popen):
         """Calling run() twice should reset the buffer so warm-up restarts."""
         inf_result = _mock_inference_result(0)
         pipeline = self._build_pipeline_with_mocked_runtime(inf_result, window_size=3)

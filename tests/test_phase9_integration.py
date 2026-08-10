@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -203,11 +203,16 @@ class TestPipelineMetadataInjection:
 
     def test_metadata_contains_backend(self, model_path: Path) -> None:
         pipeline = self._build_pipeline(model_path)
-        result = pipeline.run("dummy.mp4")
+        with patch("subprocess.Popen"), patch("shutil.which", return_value="ffmpeg"):
+            result = pipeline.run("dummy.mp4")
         assert "backend" in result.metadata
         assert result.metadata["backend"] == "TorchScript"
 
-    def test_metadata_contains_model_format(self, model_path: Path) -> None:
+    @patch("subprocess.Popen")
+    @patch("shutil.which", return_value="ffmpeg")
+    def test_end_to_end_runtime_integration(
+        self, mock_which, mock_popen, model_path: Path
+    ) -> None:
         pipeline = self._build_pipeline(model_path)
         result = pipeline.run("dummy.mp4")
         assert result.metadata.get("model_format") == "TorchScript"
@@ -233,6 +238,7 @@ class TestPipelineMetadataInjection:
         pipeline._tracker = MagicMock()
         pipeline._tracker.update.return_value = []
 
-        result = pipeline.run("dummy.mp4")
+        with patch("subprocess.Popen"), patch("shutil.which", return_value="ffmpeg"):
+            result = pipeline.run("dummy.mp4")
         assert "backend" not in result.metadata
         assert "model_format" not in result.metadata
