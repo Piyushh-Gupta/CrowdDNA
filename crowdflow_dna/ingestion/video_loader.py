@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -248,7 +249,7 @@ class VideoIngestor:
         
         stderr_file = tempfile.TemporaryFile()
         process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=stderr_file, bufsize=frame_bytes * 2
+            cmd, stdout=subprocess.PIPE, stderr=stderr_file, stdin=subprocess.DEVNULL
         )
         logger.info("[FFMPEG_INGEST] Process started (PID: %d)", process.pid)
         logger.info("[FFMPEG_INGEST] Waiting for first frame bytes...")
@@ -260,14 +261,26 @@ class VideoIngestor:
                 if time.monotonic() > deadline:
                     raise VideoCorruptionError("Global deadline exceeded during FFmpeg decode")
 
-                raw_frame = b''
+                raw_frame = bytearray()
                 bytes_needed = frame_bytes
                 while bytes_needed > 0:
-                    chunk = process.stdout.read(bytes_needed)
+                    timeout = deadline - time.monotonic()
+                    if timeout <= 0:
+                        raise VideoCorruptionError("Global deadline exceeded waiting for FFmpeg stdout")
+                    
+                    if sys.platform != "win32":
+                        import select
+                        r, _, _ = select.select([process.stdout.fileno()], [], [], timeout)
+                        if not r:
+                            raise VideoCorruptionError("Read timeout waiting for FFmpeg stdout")
+                            
+                    chunk = process.stdout.read1(min(bytes_needed, 1048576))
                     if not chunk:
                         break
-                    raw_frame += chunk
+                    raw_frame.extend(chunk)
                     bytes_needed -= len(chunk)
+                
+                raw_frame = bytes(raw_frame)
                 
                 if not raw_frame:
                     break # EOF

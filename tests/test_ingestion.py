@@ -101,6 +101,8 @@ def mock_ffmpeg_process(width=640, height=480, readable_frames=10, returncode=0,
             return b""
 
     process.stdout.read.side_effect = side_effect
+    process.stdout.read1.side_effect = side_effect
+    process.stdout.fileno.return_value = 1
     process.stderr.read.return_value = b"stderr dummy"
     process.poll.return_value = returncode
     return process
@@ -298,3 +300,63 @@ def test_pipes_closed_on_success(
     list(frames_iter)
     
     process.stdout.close.assert_called_once()
+
+@patch("shutil.which", return_value="/usr/bin/ffmpeg")
+@patch("subprocess.run")
+@patch("subprocess.Popen")
+def test_popen_arguments(
+    mock_popen, mock_run, mock_which, ingestor: VideoIngestor, tmp_mp4: Path
+) -> None:
+    mock_run.return_value = mock_ffprobe_result()
+    mock_popen.return_value = mock_ffmpeg_process()
+    import time
+    list(ingestor.load(str(tmp_mp4), deadline=time.monotonic() + 10)[0])
+    
+    kwargs = mock_popen.call_args[1]
+    import subprocess
+    assert kwargs.get("stdin") == subprocess.DEVNULL
+    assert "bufsize" not in kwargs
+
+@patch("shutil.which", return_value="/usr/bin/ffmpeg")
+@patch("subprocess.run")
+@patch("subprocess.Popen")
+def test_partial_chunks_accumulate(
+    mock_popen, mock_run, mock_which, ingestor: VideoIngestor, tmp_mp4: Path
+) -> None:
+    mock_run.return_value = mock_ffprobe_result(width=2, height=2, frame_count=1)
+    
+    process = mock_ffmpeg_process()
+    # 2x2x3 = 12 bytes total per frame. Split into 3 chunks: 5, 5, 2.
+    process.stdout.read1.side_effect = [b"12345", b"67890", b"12", b""]
+    mock_popen.return_value = process
+    
+    import time
+    frames_iter, _ = ingestor.load(str(tmp_mp4), deadline=time.monotonic() + 10)
+    frames = list(frames_iter)
+    
+    assert len(frames) == 1
+    assert frames[0].tobytes() == b"123456789012"
+    assert process.stdout.read1.call_count == 4
+
+@patch("shutil.which", return_value="/usr/bin/ffmpeg")
+@patch("subprocess.run")
+@patch("subprocess.Popen")
+@patch("sys.platform", "linux")
+@patch("select.select", return_value=([], [], []))
+def test_timeout_raises(
+    mock_select, mock_popen, mock_run, mock_which, ingestor: VideoIngestor, tmp_mp4: Path
+) -> None:
+    mock_run.return_value = mock_ffprobe_result(width=2, height=2, frame_count=1)
+    
+    process = mock_ffmpeg_process()
+    process.poll.return_value = None
+    mock_popen.return_value = process
+    
+    import time
+    frames_iter, _ = ingestor.load(str(tmp_mp4), deadline=time.monotonic() + 0.1)
+    
+    from crowdflow_dna.errors import VideoCorruptionError
+    with pytest.raises(VideoCorruptionError, match="timeout"):
+        list(frames_iter)
+        
+    process.terminate.assert_called()
