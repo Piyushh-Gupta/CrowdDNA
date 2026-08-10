@@ -153,7 +153,7 @@ def process_video(
             
             # Run the diagnostic out-of-process to protect the Gradio worker
             result = subprocess.run(
-                [sys.executable, "scripts/render_upload_diagnostic.py", video_file],
+                [sys.executable, "scripts/minimal_diagnostic.py", video_file],
                 capture_output=True, text=True, check=False
             )
             
