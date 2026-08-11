@@ -25,6 +25,30 @@ from crowdflow_dna.rendering.timeline import TimelineEntry
 from crowdflow_dna.schemas import RiskPrediction
 
 
+import subprocess
+
+# ---------------------------------------------------------------------------
+# Import Boundary Verification
+# ---------------------------------------------------------------------------
+
+def test_app_import_remains_lightweight() -> None:
+    """Importing app.py must not eagerly import heavy ML libraries."""
+    code = (
+        "import sys\n"
+        "import app\n"
+        "bad_modules = [m for m in sys.modules.keys() if m in ('torch', 'torch_geometric', 'ultralytics', 'onnxruntime')]\n"
+        "if bad_modules:\n"
+        "    sys.exit(f'FAIL: {bad_modules}')\n"
+        "sys.exit(0)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(Path(__file__).parent.parent),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"Heavy imports detected on app initialization: {result.stderr or result.stdout}"
+
 # ---------------------------------------------------------------------------
 # process_video()
 # ---------------------------------------------------------------------------
@@ -39,7 +63,7 @@ def test_process_video_none_input_returns_error_status() -> None:
     assert status == "Please upload a video file."
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_returns_four_tuple(mock_pipeline_cls) -> None:
     """process_video must always return exactly 4 elements."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
@@ -51,7 +75,7 @@ def test_process_video_returns_four_tuple(mock_pipeline_cls) -> None:
     assert len(result) == 4
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_success_returns_video_path(mock_pipeline_cls) -> None:
     """On success, the first element must be the output video path string."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
@@ -63,7 +87,7 @@ def test_process_video_success_returns_video_path(mock_pipeline_cls) -> None:
 
 
 @patch("app.os.environ.get", return_value=None)
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_success_status_contains_ok(mock_pipeline_cls, _mock_env) -> None:
     """On success with no model configured, status must indicate dummy mode."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
@@ -74,7 +98,7 @@ def test_process_video_success_status_contains_ok(mock_pipeline_cls, _mock_env) 
     assert "dummy mode" in status.lower()
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_crowdflow_error_returns_none_path(mock_pipeline_cls) -> None:
     """If pipeline raises CrowdFlowError, return None for video path."""
     mock_pipeline_cls.return_value.run.side_effect = CrowdFlowError("Mock failure")
@@ -85,7 +109,7 @@ def test_process_video_crowdflow_error_returns_none_path(mock_pipeline_cls) -> N
     assert md_rows == []
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_error_status_contains_message(mock_pipeline_cls) -> None:
     """The exception message must be forwarded to the status text."""
     mock_pipeline_cls.return_value.run.side_effect = CrowdFlowError("Bad codec")
@@ -94,7 +118,7 @@ def test_process_video_error_status_contains_message(mock_pipeline_cls) -> None:
     assert "Bad codec" in status
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_empty_frames_returns_empty_timeline(mock_pipeline_cls) -> None:
     """If pipeline returns no frames, return early without crashing."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(output_video_path=None)
@@ -105,7 +129,7 @@ def test_process_video_empty_frames_returns_empty_timeline(mock_pipeline_cls) ->
     assert "output video" in status.lower()
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_calls_pipeline_run(mock_pipeline_cls) -> None:
     """The pipeline's run() method must be called with the uploaded path."""
     mock_pipeline = mock_pipeline_cls.return_value
@@ -117,7 +141,7 @@ def test_process_video_calls_pipeline_run(mock_pipeline_cls) -> None:
     mock_pipeline.run.assert_called_once_with("uploaded_test.mp4")
 
 
-@patch("app.CrowdFlowPipeline")
+@patch("crowdflow_dna.pipeline.CrowdFlowPipeline")
 def test_process_video_timeline_row_count_matches_entries(mock_pipeline_cls) -> None:
     """If dummy mode, row count must equal timeline entry count."""
     mock_pipeline_cls.return_value.run.return_value = PipelineResult(
