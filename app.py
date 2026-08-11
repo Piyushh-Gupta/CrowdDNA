@@ -17,8 +17,6 @@ import gradio.networking
 import gradio_client.utils as client_utils
 
 from crowdflow_dna.errors import CrowdFlowError
-from crowdflow_dna.inference import ModelNotFoundError, UnsupportedModelFormatError
-from crowdflow_dna.pipeline import CrowdFlowPipeline
 from crowdflow_dna.rendering.timeline import TimelineEntry
 
 logging.basicConfig(level=logging.INFO)
@@ -95,6 +93,10 @@ def process_video(
     """
     thread_id = __import__('threading').get_ident()
     logger.info("[Thread %s] Entering app.process_video()", thread_id)
+    
+    from crowdflow_dna.inference import ModelNotFoundError, UnsupportedModelFormatError
+    from crowdflow_dna.pipeline import CrowdFlowPipeline
+    
     if not video_file:
         logger.info("[Thread %s] process_video() return - no video", thread_id)
         return None, [], [], "Please upload a video file."
