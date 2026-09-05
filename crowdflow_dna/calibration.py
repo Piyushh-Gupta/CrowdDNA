@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
+from crowdflow_dna.geometry_validation import _check_polygon_validity
 
 @dataclass
 class CalibrationConfig:
@@ -17,7 +18,6 @@ class CalibrationConfig:
         if len(self.world_points_m) != 4:
             raise ValueError(f"Exactly 4 world points required, got {len(self.world_points_m)}")
         
-        # Check collinearity via homography computation
         src = np.array(self.image_points, dtype=np.float32)
         dst = np.array(self.world_points_m, dtype=np.float32)
         
@@ -25,9 +25,13 @@ class CalibrationConfig:
             if not np.isfinite(pts).all():
                 raise ValueError(f"{name} must contain finite numeric values.")
             
+        # Robust geometric validation
+        _check_polygon_validity(src, 'image_points', min_area=1.0) # Image area should be > 10 pixels
+        _check_polygon_validity(dst, 'world_points_m', min_area=1e-3) # World area should be non-negligible
+            
         H, status = cv2.findHomography(src, dst)
-        if H is None or H.shape != (3, 3):
-            raise ValueError("Failed to compute homography matrix. Points may be collinear.")
+        if H is None or H.shape != (3, 3) or not np.isfinite(H).all():
+            raise ValueError("Failed to compute a valid, finite homography matrix. Points may be collinear or ill-conditioned.")
 
 class MetricCalibrator:
     """
@@ -55,4 +59,8 @@ class MetricCalibrator:
             
         pts = np.array([positions_px], dtype=np.float32)
         transformed = cv2.perspectiveTransform(pts, self.H)
+        
+        if not np.isfinite(transformed).all():
+            raise ValueError("Transformation resulted in non-finite coordinates. The homography may be numerically unstable.")
+            
         return transformed[0]

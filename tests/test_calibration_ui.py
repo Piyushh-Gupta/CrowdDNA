@@ -37,20 +37,20 @@ def test_handle_image_click_ordering():
     assert s5 == [(50, 50)]
 
 def test_validate_and_preview_uncalibrated_disabled():
-    state, msg, _ = validate_and_preview([], [], enable_calib=False)
-    assert state == "UNCALIBRATED"
-    assert "disabled" in msg
+    state, msg, _, _ = validate_and_preview([], [], enable_calib=False)
+    assert state == "UNVERIFIED / INCOMPLETE"
+    assert "exactly 4" in msg
 
 def test_validate_and_preview_invalid_points():
-    state, msg, _ = validate_and_preview([(0,0)], [], enable_calib=True)
-    assert state == "UNCALIBRATED"
+    state, msg, _, _ = validate_and_preview([(0,0)], [], enable_calib=True)
+    assert state == "UNVERIFIED / INCOMPLETE"
     assert "exactly 4" in msg
 
 def test_validate_and_preview_valid():
     state_pts = [(0, 0), (100, 0), (100, 100), (0, 100)]
     world_pts = [[0, 0], [10, 0], [10, 10], [0, 10]]
     
-    state, msg, prev = validate_and_preview(state_pts, world_pts, enable_calib=True)
+    state, msg, prev, _ = validate_and_preview(state_pts, world_pts, enable_calib=True)
     assert state == "CALIBRATION ENABLED"
     assert "VALID" in msg
     # Reprojection error should be extremely small
@@ -64,8 +64,8 @@ def test_evaluate_calibration():
         world_points_m=[(0,0), (10,0), (10,10), (0,10)]
     )
     res = evaluate_calibration(cfg)
-    assert res["status"] == "VALID"
-    assert res["mean_error"] < 1e-5
+    assert res["status"] == "VALID GEOMETRY"
+    assert res["fit_residual"] < 1e-5
     
     pts = res["transformed_points"]
     assert np.allclose(pts[0], [0, 0], atol=1e-5)

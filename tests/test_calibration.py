@@ -20,7 +20,7 @@ def test_collinear_points():
         image_points=[(0,0), (1,0), (2,0), (3,0)],
         world_points_m=[(0,0), (1,0), (1,1), (0,1)]
     )
-    with pytest.raises(ValueError, match="collinear"):
+    with pytest.raises(ValueError, match="valid quadrilateral|collinear"):
         cfg.validate()
 
 def test_disabled_behavior():

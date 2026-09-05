@@ -119,11 +119,8 @@ def handle_image_click(evt: gr.SelectData, image: np.ndarray, state_pts: list):
     return drawn_img, state_pts, msg
 
 def validate_and_preview(state_pts: list, world_coords: list, enable_calib: bool):
-    if not enable_calib:
-        return "UNCALIBRATED", "Calibration disabled.", gr.update()
-        
     if len(state_pts) != 4:
-        return "UNCALIBRATED", f"Need exactly 4 image points, got {len(state_pts)}", gr.update()
+        return "UNVERIFIED / INCOMPLETE", f"Need exactly 4 image points, got {len(state_pts)}", gr.update(), False
         
     try:
         w_pts = []
@@ -133,17 +130,18 @@ def validate_and_preview(state_pts: list, world_coords: list, enable_calib: bool
         cfg = CalibrationConfig(enabled=True, image_points=state_pts, world_points_m=w_pts)
         res = evaluate_calibration(cfg)
         
-        err = res["mean_error"]
-        status_msg = f"CALIBRATION VALID. Mean reprojection error: {err:.4f} m"
-        state_val = "CALIBRATION ENABLED"
+        err = res["fit_residual"]
+        status_msg = f"VALID GEOMETRY. Four-point fit residual: {err:.4f} m. (Note: this is a mathematical fit residual, not an independent real-world accuracy validation)."
+        
+        state_val = "CALIBRATION ENABLED" if enable_calib else "VALID GEOMETRY"
         
         preview_text = "Metric Ground-Plane Preview:\n"
         for i, pt in enumerate(res["transformed_points"]):
             preview_text += f"Point {i+1}: {pt[0]:.2f}m, {pt[1]:.2f}m\n"
             
-        return state_val, status_msg, gr.update(value=preview_text)
+        return state_val, status_msg, gr.update(value=preview_text), enable_calib
     except Exception as e:
-        return "UNCALIBRATED", f"Invalid Calibration: {e}", gr.update(value="")
+        return "UNVERIFIED / INCOMPLETE", f"Invalid Calibration: {e}", gr.update(value=""), False
 
 def process_video(
     video_file: Optional[str],
@@ -315,10 +313,26 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
         outputs=[calib_frame, state_image_points, calib_msg]
     )
     
+    
+    def invalidate_state():
+        return "UNVERIFIED / INCOMPLETE", "", "", False
+        
+    world_coords_df.change(
+        fn=invalidate_state,
+        inputs=[],
+        outputs=[calib_state, calib_validation_msg, calib_preview, enable_calibration]
+    )
+    
+    enable_calibration.change(
+        fn=validate_and_preview,
+        inputs=[state_image_points, world_coords_df, enable_calibration],
+        outputs=[calib_state, calib_validation_msg, calib_preview, enable_calibration]
+    )
+
     validate_btn.click(
         fn=validate_and_preview,
         inputs=[state_image_points, world_coords_df, enable_calibration],
-        outputs=[calib_state, calib_validation_msg, calib_preview]
+        outputs=[calib_state, calib_validation_msg, calib_preview, enable_calibration]
     )
 
     run_btn.click(
