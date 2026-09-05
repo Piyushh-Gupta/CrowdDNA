@@ -602,8 +602,9 @@ def test_torch_geometric_import_error_handled_gracefully() -> None:
 def test_extract_arrays_shape() -> None:
     """_extract_arrays must return (N,2) arrays for N tracks."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
+    pipeline = CrowdFlowPipeline()
     tracks = [_make_track(1, 100.0, 200.0), _make_track(2, 300.0, 400.0)]
-    pos, vel = CrowdFlowPipeline._extract_arrays(tracks, _W, _H)
+    pos, vel = pipeline._extract_arrays(tracks, _W, _H)
     assert pos.shape == (2, 2)
     assert vel.shape == (2, 2)
 
@@ -611,8 +612,9 @@ def test_extract_arrays_shape() -> None:
 def test_extract_arrays_normalises_positions() -> None:
     """Positions must be centroid/frame_dim, i.e. in [0, 1]."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
+    pipeline = CrowdFlowPipeline()
     track = _make_track(1, cx=320.0, cy=240.0)  # exact centre of 640x480
-    pos, _ = CrowdFlowPipeline._extract_arrays([track], _W, _H)
+    pos, _ = pipeline._extract_arrays([track], _W, _H)
     assert pos[0, 0] == pytest.approx(0.5)   # cx / width
     assert pos[0, 1] == pytest.approx(0.5)   # cy / height
 
@@ -620,13 +622,14 @@ def test_extract_arrays_normalises_positions() -> None:
 def test_extract_arrays_velocity_not_normalised() -> None:
     """Velocities are passed as raw pixel deltas, not normalised."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
+    pipeline = CrowdFlowPipeline()
     track = TrackItem(
         track_id=1,
         bbox=(0.0, 0.0, 50.0, 50.0),
         centroid=(25.0, 25.0),
         velocity=(10.0, -5.0),
     )
-    _, vel = CrowdFlowPipeline._extract_arrays([track], _W, _H)
+    _, vel = pipeline._extract_arrays([track], _W, _H)
     assert vel[0, 0] == pytest.approx(10.0)
     assert vel[0, 1] == pytest.approx(-5.0)
 
@@ -634,8 +637,9 @@ def test_extract_arrays_velocity_not_normalised() -> None:
 def test_extract_arrays_dtype_is_float32() -> None:
     """Both returned arrays must have dtype float32 (GraphBuilder contract)."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
+    pipeline = CrowdFlowPipeline()
     tracks = [_make_track()]
-    pos, vel = CrowdFlowPipeline._extract_arrays(tracks, _W, _H)
+    pos, vel = pipeline._extract_arrays(tracks, _W, _H)
     assert pos.dtype == np.float32
     assert vel.dtype == np.float32
 
@@ -643,9 +647,10 @@ def test_extract_arrays_dtype_is_float32() -> None:
 def test_extract_arrays_multiple_tracks_ordering() -> None:
     """Track ordering in the output arrays must match input list ordering."""
     from crowdflow_dna.pipeline import CrowdFlowPipeline
+    pipeline = CrowdFlowPipeline()
     t1 = _make_track(1, cx=100.0, cy=200.0)
     t2 = _make_track(2, cx=400.0, cy=300.0)
-    pos, _ = CrowdFlowPipeline._extract_arrays([t1, t2], _W, _H)
+    pos, _ = pipeline._extract_arrays([t1, t2], _W, _H)
     assert pos[0, 0] == pytest.approx(100.0 / _W)
     assert pos[1, 0] == pytest.approx(400.0 / _W)
 
