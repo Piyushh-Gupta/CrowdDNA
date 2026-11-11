@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from typing import Dict, Any, Tuple
+from typing import Any, Dict
 from crowdflow_dna.calibration import MetricCalibrator, CalibrationConfig
 
 def evaluate_calibration(config: CalibrationConfig) -> Dict[str, Any]:

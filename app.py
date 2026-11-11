@@ -12,10 +12,14 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+import cv2
 import gradio as gr
 import gradio.networking
 import gradio_client.utils as client_utils
+import numpy as np
 
+from crowdflow_dna.calibration import CalibrationConfig
+from crowdflow_dna.calibration_utils import draw_calibration_points, evaluate_calibration
 from crowdflow_dna.errors import CrowdFlowError
 from crowdflow_dna.rendering.timeline import TimelineEntry
 
@@ -81,27 +85,62 @@ def _metadata_to_rows(metadata: Dict[str, Any]) -> list:
 
 
 
-import cv2
-import numpy as np
-from crowdflow_dna.calibration import CalibrationConfig
-from crowdflow_dna.calibration_utils import draw_calibration_points, evaluate_calibration
-
-def get_first_frame(video_file: Optional[str]) -> Tuple[Optional[np.ndarray], list, str, Optional[np.ndarray]]:
+def get_first_frame(video_file: Optional[str]) -> Tuple[
+    Optional[np.ndarray],   # frame image (or None)
+    list,                   # placeholder world-coords df
+    str,                    # status message
+    Optional[np.ndarray],   # preview image (same as frame)
+    list,                   # initial image points
+    bool,                   # enable-calibration flag
+    str,                    # calibration state
+    str,                    # validation message
+    str,                    # metric preview text
+]:
     if not video_file:
-        return None, [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]], "No video", None
-    
+        return (
+            None,
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+            "No video",
+            None,
+            [],
+            False,
+            "UNVERIFIED / INCOMPLETE",
+            "",
+            "",
+        )
+
     cap = cv2.VideoCapture(video_file)
     ret, frame = cap.read()
     cap.release()
     if not ret:
-        return None, [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]], "Error reading video", None
-        
+        return (
+            None,
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+            "Error reading video",
+            None,
+            [],
+            False,
+            "UNVERIFIED / INCOMPLETE",
+            "",
+            "",
+        )
+
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
+
     df = [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
     msg = "Frame loaded. Click 4 points in order (Top-Left, Top-Right, Bottom-Right, Bottom-Left)"
-    
-    return frame_rgb, df, msg, frame_rgb
+
+    return (
+        frame_rgb,
+        df,
+        msg,
+        frame_rgb,
+        [],
+        False,
+        "UNVERIFIED / INCOMPLETE",
+        "",
+        "",
+    )
 
 def handle_image_click(evt: gr.SelectData, image: np.ndarray, state_pts: list):
     x, y = evt.index
@@ -116,7 +155,8 @@ def handle_image_click(evt: gr.SelectData, image: np.ndarray, state_pts: list):
     if len(state_pts) == 4:
         msg += " Now enter the real-world coordinates in meters."
         
-    return drawn_img, state_pts, msg
+    # Also return invalidated calibration state
+    return drawn_img, state_pts, msg, "UNVERIFIED / INCOMPLETE", "", "", False
 
 def validate_and_preview(state_pts: list, world_coords: list, enable_calib: bool):
     if len(state_pts) != 4:
@@ -304,13 +344,23 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
     input_video.change(
         fn=get_first_frame,
         inputs=[input_video],
-        outputs=[state_original_frame, world_coords_df, calib_msg, calib_frame]
+        outputs=[
+            state_original_frame,
+            world_coords_df,
+            calib_msg,
+            calib_frame,
+            state_image_points,
+            enable_calibration,
+            calib_state,
+            calib_validation_msg,
+            calib_preview,
+        ],
     )
     
     calib_frame.select(
         fn=handle_image_click,
         inputs=[state_original_frame, state_image_points],
-        outputs=[calib_frame, state_image_points, calib_msg]
+        outputs=[calib_frame, state_image_points, calib_msg, calib_state, calib_validation_msg, calib_preview, enable_calibration]
     )
     
     

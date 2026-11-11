@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch, MagicMock
 from app import process_video
 from crowdflow_dna.calibration import CalibrationConfig

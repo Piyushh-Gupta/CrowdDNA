@@ -1,4 +1,3 @@
-import pytest
 import numpy as np
 from crowdflow_dna.calibration import CalibrationConfig, MetricCalibrator
 

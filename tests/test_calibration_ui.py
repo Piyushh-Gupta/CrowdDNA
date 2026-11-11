@@ -1,8 +1,6 @@
-import pytest
 import numpy as np
-import gradio as gr
 from app import get_first_frame, handle_image_click, validate_and_preview
-from crowdflow_dna.calibration_utils import draw_calibration_points, evaluate_calibration
+from crowdflow_dna.calibration_utils import evaluate_calibration
 from crowdflow_dna.calibration import CalibrationConfig
 from crowdflow_dna.graph.graph_builder import GraphBuilder
 

@@ -21,6 +21,7 @@ import yaml
 from torch.utils.data import DataLoader, random_split
 from torch_geometric.data import Data
 
+from crowdflow_dna.device import get_safe_device
 from crowdflow_dna.graph.sequence_dataset import SequenceGraphDataset, SequenceSample
 from crowdflow_dna.model.crowddna_model import CrowdDNAModel, CrowdDNAModelConfig
 
@@ -186,7 +187,7 @@ class Trainer:
         deterministic = train_cfg.get("deterministic", False)
         set_random_seed(self.seed, deterministic)
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_safe_device()
         
         # 1. Dataset & DataLoaders
         self.dataset = SequenceGraphDataset(self.config["simulation"]["output_dir"])

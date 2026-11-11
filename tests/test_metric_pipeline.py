@@ -1,8 +1,9 @@
-import pytest
+import pytest  # noqa: F401
 import numpy as np
 from crowdflow_dna.calibration import CalibrationConfig
 from crowdflow_dna.pipeline import CrowdFlowPipeline
 from crowdflow_dna.schemas import TrackItem
+from crowdflow_dna.graph.graph_builder import GraphBuilder
 
 def test_pipeline_disabled_calibration():
     pipeline = CrowdFlowPipeline()
@@ -42,10 +43,7 @@ def test_pipeline_metric_calibration():
     # velocity = dx/dt = (52-50) / 0.1 = 20
     assert np.allclose(vel2[0], [20, 0])
 
-import pytest
-import numpy as np
-from crowdflow_dna.graph.graph_builder import GraphBuilder
-
+# Removed lines 45-47 as they were duplicates causing lint errors
 def test_graphbuilder_metric_distance():
     # In metric calibration mode, proximity_radius is set to 2.0
     gb = GraphBuilder(proximity_radius=2.0)
