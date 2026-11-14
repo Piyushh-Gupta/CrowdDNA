@@ -299,6 +299,10 @@ class TestPipelineInferenceIntegration:
         pipeline._model_path = "mock.pt"
         pipeline._model_version = None
         pipeline._window_size = window_size
+        pipeline._calibration_config = __import__("crowdflow_dna.calibration").calibration.CalibrationConfig()
+        pipeline._calibrator = __import__("crowdflow_dna.calibration").calibration.MetricCalibrator(pipeline._calibration_config)
+        pipeline._prev_metric_positions = {}
+        pipeline._dt = 0.1
         pipeline._ingestor = MagicMock()
         pipeline._detector = MagicMock()
         pipeline._tracker = MagicMock()

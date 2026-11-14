@@ -13,10 +13,14 @@ import os
 import socket
 from typing import Any, Dict, List, Optional, Tuple
 
+import cv2
 import gradio as gr
 import gradio.networking
 import gradio_client.utils as client_utils
+import numpy as np
 
+from crowdflow_dna.calibration import CalibrationConfig
+from crowdflow_dna.calibration_utils import draw_calibration_points, evaluate_calibration
 from crowdflow_dna.errors import CrowdFlowError
 from crowdflow_dna.rendering.timeline import TimelineEntry
 
@@ -81,8 +85,110 @@ def _metadata_to_rows(metadata: Dict[str, Any]) -> list:
     ]
 
 
+
+def get_first_frame(video_file: Optional[str]) -> Tuple[
+    Optional[np.ndarray],   # frame image (or None)
+    list,                   # placeholder world-coords df
+    str,                    # status message
+    Optional[np.ndarray],   # preview image (same as frame)
+    list,                   # initial image points
+    bool,                   # enable-calibration flag
+    str,                    # calibration state
+    str,                    # validation message
+    str,                    # metric preview text
+]:
+    if not video_file:
+        return (
+            None,
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+            "No video",
+            None,
+            [],
+            False,
+            "UNVERIFIED / INCOMPLETE",
+            "",
+            "",
+        )
+
+    cap = cv2.VideoCapture(video_file)
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        return (
+            None,
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+            "Error reading video",
+            None,
+            [],
+            False,
+            "UNVERIFIED / INCOMPLETE",
+            "",
+            "",
+        )
+
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    df = [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
+    msg = "Frame loaded. Click 4 points in order (Top-Left, Top-Right, Bottom-Right, Bottom-Left)"
+
+    return (
+        frame_rgb,
+        df,
+        msg,
+        frame_rgb,
+        [],
+        False,
+        "UNVERIFIED / INCOMPLETE",
+        "",
+        "",
+    )
+
+def handle_image_click(evt: gr.SelectData, image: np.ndarray, state_pts: list):
+    x, y = evt.index
+    if len(state_pts) >= 4:
+        state_pts = [] # Reset if already 4 points
+        
+    state_pts.append((x, y))
+    
+    drawn_img = draw_calibration_points(image, state_pts)
+    
+    msg = f"Selected {len(state_pts)}/4 points."
+    if len(state_pts) == 4:
+        msg += " Now enter the real-world coordinates in meters."
+        
+    # Also return invalidated calibration state
+    return drawn_img, state_pts, msg, "UNVERIFIED / INCOMPLETE", "", "", False
+
+def validate_and_preview(state_pts: list, world_coords: list, enable_calib: bool):
+    if len(state_pts) != 4:
+        return "UNVERIFIED / INCOMPLETE", f"Need exactly 4 image points, got {len(state_pts)}", gr.update(), False
+        
+    try:
+        w_pts = []
+        for row in world_coords:
+            w_pts.append((float(row[0]), float(row[1])))
+            
+        cfg = CalibrationConfig(enabled=True, image_points=state_pts, world_points_m=w_pts)
+        res = evaluate_calibration(cfg)
+        
+        err = res["fit_residual"]
+        status_msg = f"VALID GEOMETRY. Four-point fit residual: {err:.4f} m. (Note: this is a mathematical fit residual, not an independent real-world accuracy validation)."
+        
+        state_val = "CALIBRATION ENABLED" if enable_calib else "VALID GEOMETRY"
+        
+        preview_text = "Metric Ground-Plane Preview:\n"
+        for i, pt in enumerate(res["transformed_points"]):
+            preview_text += f"Point {i+1}: {pt[0]:.2f}m, {pt[1]:.2f}m\n"
+            
+        return state_val, status_msg, gr.update(value=preview_text), enable_calib
+    except Exception as e:
+        return "UNVERIFIED / INCOMPLETE", f"Invalid Calibration: {e}", gr.update(value=""), False
+
 def process_video(
     video_file: Optional[str],
+    state_pts: list = None,
+    world_coords: list = None,
+    enable_calib: bool = False
 ) -> Tuple[Optional[str], list, list, str]:
     """Gradio callback to run the pipeline on an uploaded video.
 
@@ -109,14 +215,23 @@ def process_video(
     # Fall back to dummy mode gracefully on any loading error.
     inference_active = False
     model_path = os.environ.get("CROWDDNA_MODEL_PATH")
+    calibration_config = None
+    if enable_calib and state_pts is not None and len(state_pts) == 4 and world_coords is not None:
+        try:
+            w_pts = [(float(r[0]), float(r[1])) for r in world_coords]
+            calibration_config = CalibrationConfig(enabled=True, image_points=state_pts, world_points_m=w_pts)
+            calibration_config.validate()
+        except Exception as e:
+            return None, [], [], f"Calibration Error: {e}"
+
     try:
-        pipeline = CrowdFlowPipeline(model_path=model_path)
+        pipeline = CrowdFlowPipeline(model_path=model_path, calibration_config=calibration_config)
         inference_active = model_path is not None
     except (ModelNotFoundError, UnsupportedModelFormatError) as exc:
         logger.warning(
             "Could not load deployment model (%s). Falling back to dummy mode.", exc
         )
-        pipeline = CrowdFlowPipeline(model_path=None)
+        pipeline = CrowdFlowPipeline(model_path=None, calibration_config=calibration_config)
 
     try:
         result = pipeline.run(video_file)
@@ -169,11 +284,51 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
         """
     )
 
+    state_image_points = gr.State([])
+    state_original_frame = gr.State(None)
+
     with gr.Row():
         with gr.Column(scale=1):
             input_video = gr.Video(label="Input Video", format="mp4")
+            
+            with gr.Accordion("Metric Ground-Plane Calibration", open=False):
+                gr.Markdown(
+                    '''
+                    **IMPORTANT**: Perspective correction alone does not establish real-world scale. 
+                    World coordinates must be entered using known physical measurements.
+                    The calibration system can establish a metric coordinate transformation only when the supplied physical correspondences are genuinely measured.
+                    
+                    **Instructions:**
+                    1. Upload a video to extract the first frame.
+                    2. Click exactly 4 points on the ground plane in the image below.
+                       *(Recommended ordering: Top-Left, Top-Right, Bottom-Right, Bottom-Left)*
+                    3. Enter the corresponding physical coordinates in meters (X, Y).
+                       *(Example: 0,0 | 10,0 | 10,5 | 0,5)*
+                    '''
+                )
+                
+                calib_frame = gr.Image(label="First Frame (Click to select points)", interactive=False)
+                calib_msg = gr.Textbox(label="Selection Status", interactive=False)
+                
+                world_coords_df = gr.Dataframe(
+                    headers=["X (meters)", "Y (meters)"],
+                    datatype=["number", "number"],
+                    row_count=(4, "fixed"),
+                    col_count=(2, "fixed"),
+                    label="World Coordinates",
+                    type="array",
+                    interactive=True
+                )
+                
+                enable_calibration = gr.Checkbox(label="Enable Calibrated Processing", value=False)
+                calib_state = gr.Textbox(label="Calibration State", value="UNCALIBRATED", interactive=False)
+                calib_validation_msg = gr.Textbox(label="Validation Result", interactive=False)
+                calib_preview = gr.Textbox(label="Metric Preview", interactive=False, lines=5)
+                validate_btn = gr.Button("Validate Calibration")
+            
             run_btn = gr.Button("Run Analysis", variant="primary")
             status_box = gr.Textbox(label="Status", interactive=False)
+            
         with gr.Column(scale=1):
             output_video = gr.Video(label="Annotated Output", interactive=False, format="mp4")
 
@@ -191,9 +346,53 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
             interactive=False,
         )
 
+    input_video.change(
+        fn=get_first_frame,
+        inputs=[input_video],
+        outputs=[
+            state_original_frame,
+            world_coords_df,
+            calib_msg,
+            calib_frame,
+            state_image_points,
+            enable_calibration,
+            calib_state,
+            calib_validation_msg,
+            calib_preview,
+        ],
+    )
+    
+    calib_frame.select(
+        fn=handle_image_click,
+        inputs=[state_original_frame, state_image_points],
+        outputs=[calib_frame, state_image_points, calib_msg, calib_state, calib_validation_msg, calib_preview, enable_calibration]
+    )
+    
+    
+    def invalidate_state():
+        return "UNVERIFIED / INCOMPLETE", "", "", False
+        
+    world_coords_df.change(
+        fn=invalidate_state,
+        inputs=[],
+        outputs=[calib_state, calib_validation_msg, calib_preview, enable_calibration]
+    )
+    
+    enable_calibration.change(
+        fn=validate_and_preview,
+        inputs=[state_image_points, world_coords_df, enable_calibration],
+        outputs=[calib_state, calib_validation_msg, calib_preview, enable_calibration]
+    )
+
+    validate_btn.click(
+        fn=validate_and_preview,
+        inputs=[state_image_points, world_coords_df, enable_calibration],
+        outputs=[calib_state, calib_validation_msg, calib_preview, enable_calibration]
+    )
+
     run_btn.click(
         fn=process_video,
-        inputs=[input_video],
+        inputs=[input_video, state_image_points, world_coords_df, enable_calibration],
         outputs=[output_video, timeline_table, metadata_table, status_box],
     )
 

@@ -18,8 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import torch
 import yaml
+
+from crowdflow_dna.device import get_safe_device
 
 from training.evaluate_model import EvaluationEngine, EvaluationResult
 from training.reporting import ReportArtifacts, ReportGenerator
@@ -104,7 +105,7 @@ class ExperimentRunner:
         deterministic = self.config["training"].get("deterministic", False)
         set_random_seed(self.seed, deterministic)
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_safe_device()
         
     def _get_git_commit(self) -> str | None:
         return _get_git_commit()

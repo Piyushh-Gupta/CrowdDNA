@@ -28,7 +28,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -56,6 +56,7 @@ from crowdflow_dna.rendering.video_renderer import FrameAnnotator
 from crowdflow_dna.schemas import RiskPrediction, TrackItem
 from crowdflow_dna.tools.temp_cleanup import register_output_file
 from crowdflow_dna.tracking.tracker import ByteTracker
+from crowdflow_dna.calibration import CalibrationConfig, MetricCalibrator
 
 try:
     import torch
@@ -153,6 +154,7 @@ class CrowdFlowPipeline:
         model_path: str | Path | None = None,
         model_version: Optional[str] = None,
         window_size: int = _WINDOW_SIZE,
+        calibration_config: Optional[CalibrationConfig] = None,
     ) -> None:
         """Initialise all pipeline components.
 
@@ -164,6 +166,8 @@ class CrowdFlowPipeline:
                 ``InferenceRuntime.load_model()`` for provenance tracking.
             window_size: Number of consecutive frames per inference call.
                 Must be ≥ 1. Defaults to ``_WINDOW_SIZE`` (10).
+            calibration_config: Optional configuration for mapping pixel
+                coordinates to metric ground-plane coordinates.
 
         Raises:
             ModelNotFoundError: If ``model_path`` is provided but the file
@@ -186,6 +190,9 @@ class CrowdFlowPipeline:
         self._model_path = model_path
         self._model_version = model_version
         self._window_size = window_size
+        self._calibration_config = calibration_config or CalibrationConfig()
+        self._calibrator = MetricCalibrator(self._calibration_config)
+        self._prev_metric_positions: Dict[int, Tuple[float, float]] = {}
 
     @staticmethod
     def _create_output_file() -> str:
@@ -230,11 +237,17 @@ class CrowdFlowPipeline:
         # Stage 1: Ingestion (Streaming Metadata & Iterator)
         # ----------------------------------------------------------------
         frames_iterator, metadata = self._ingestor.load(video_path, deadline)
+        
+        input_fps = float(metadata.get("fps", 30.0))
+        sample_rate = int(metadata.get("sample_rate", 5))
+        self._dt = float(sample_rate) / input_fps if input_fps > 0 else 0.1
+
         logger.info(
-            "Ingestion metadata ready: %.1f fps, %dx%d",
-            metadata["fps"],
+            "Ingestion metadata ready: %.1f fps, %dx%d, dt: %.3fs",
+            input_fps,
             metadata["width"],
             metadata["height"],
+            self._dt,
         )
 
         thread_id = __import__('threading').get_ident()
@@ -282,20 +295,25 @@ class CrowdFlowPipeline:
         min_dim = min(width, height)
 
         raw_radius = float(config.PROXIMITY_RADIUS)
-        norm_radius = raw_radius / min_dim if min_dim > 0 else 1.0
+        if self._calibration_config.enabled:
+            # Metric space expects the physical 2.0m radius from training
+            final_radius = 2.0
+            logger.info("Calibration enabled: using metric PROXIMITY_RADIUS=%.1f m", final_radius)
+        else:
+            norm_radius = raw_radius / min_dim if min_dim > 0 else 1.0
+            if norm_radius > 1.0:
+                logger.warning(
+                    "Normalised proximity radius %.4f > 1.0 (frame %dx%d, "
+                    "PROXIMITY_RADIUS=%.1f). Clamping to 1.0.",
+                    norm_radius,
+                    width,
+                    height,
+                    raw_radius,
+                )
+                norm_radius = 1.0
+            final_radius = norm_radius
 
-        if norm_radius > 1.0:
-            logger.warning(
-                "Normalised proximity radius %.4f > 1.0 (frame %dx%d, "
-                "PROXIMITY_RADIUS=%.1f). Clamping to 1.0.",
-                norm_radius,
-                width,
-                height,
-                raw_radius,
-            )
-            norm_radius = 1.0
-
-        graph_builder = GraphBuilder(proximity_radius=norm_radius)
+        graph_builder = GraphBuilder(proximity_radius=final_radius)
 
         # ----------------------------------------------------------------
         # Stage 3: Reset stateful components for this run
@@ -622,8 +640,8 @@ class CrowdFlowPipeline:
             for t in tracks
         ]
 
-    @staticmethod
     def _extract_arrays(
+        self,
         tracks: List[TrackItem],
         width: int,
         height: int,
@@ -639,12 +657,44 @@ class CrowdFlowPipeline:
             Tuple ``(positions, velocities)`` where both are ``np.ndarray``
             of shape ``(N, 2)`` and dtype ``float32``.
         """
-        positions = np.array(
-            [[t.centroid[0] / width, t.centroid[1] / height] for t in tracks],
-            dtype=np.float32,
-        )
-        velocities = np.array(
-            [[t.velocity[0], t.velocity[1]] for t in tracks],
-            dtype=np.float32,
-        )
-        return positions, velocities
+        if not self._calibration_config.enabled:
+            # Fall back to original pixel-space (normalized) behaviour
+            positions = np.array(
+                [[t.centroid[0] / width, t.centroid[1] / height] for t in tracks],
+                dtype=np.float32,
+            )
+            velocities = np.array(
+                [[t.velocity[0], t.velocity[1]] for t in tracks],
+                dtype=np.float32,
+            )
+            return positions, velocities
+            
+        # Metric Calibration Path
+        # 1. Use bottom-center for ground plane projection
+        bottom_centers = np.array([
+            [(t.bbox[0] + t.bbox[2]) / 2.0, t.bbox[3]] for t in tracks
+        ], dtype=np.float32)
+        
+        # 2. Transform to metric space
+        metric_positions = self._calibrator.transform_positions(bottom_centers)
+        
+        # 3. Compute metric velocities
+        metric_velocities = []
+        new_prev_positions = {}
+        
+        for i, t in enumerate(tracks):
+            curr_pos = (metric_positions[i, 0], metric_positions[i, 1])
+            new_prev_positions[t.track_id] = curr_pos
+            
+            if t.track_id in self._prev_metric_positions:
+                prev_pos = self._prev_metric_positions[t.track_id]
+                vx = (curr_pos[0] - prev_pos[0]) / self._dt
+                vy = (curr_pos[1] - prev_pos[1]) / self._dt
+            else:
+                vx, vy = 0.0, 0.0
+                
+            metric_velocities.append([vx, vy])
+            
+        self._prev_metric_positions = new_prev_positions
+        
+        return metric_positions, np.array(metric_velocities, dtype=np.float32)
