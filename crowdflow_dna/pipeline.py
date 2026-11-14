@@ -54,6 +54,7 @@ from crowdflow_dna.ingestion.video_loader import VideoIngestor
 from crowdflow_dna.rendering.timeline import TimelineBuilder, TimelineEntry
 from crowdflow_dna.rendering.video_renderer import FrameAnnotator
 from crowdflow_dna.schemas import RiskPrediction, TrackItem
+from crowdflow_dna.tools.temp_cleanup import register_output_file
 from crowdflow_dna.tracking.tracker import ByteTracker
 
 try:
@@ -186,6 +187,19 @@ class CrowdFlowPipeline:
         self._model_version = model_version
         self._window_size = window_size
 
+    @staticmethod
+    def _create_output_file() -> str:
+        """Create a secure, unique temporary MP4 file in crowddna_outputs."""
+        output_dir = Path(tempfile.gettempdir()) / "crowddna_outputs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        fd, output_path = tempfile.mkstemp(
+            prefix=f"output_{os.getpid()}_",
+            suffix=".mp4",
+            dir=str(output_dir),
+        )
+        os.close(fd)
+        return output_path
+
     def run(self, video_path: str) -> PipelineResult:
         """Process a video file end-to-end.
 
@@ -302,8 +316,7 @@ class CrowdFlowPipeline:
         output_fps = input_fps / sample_rate if sample_rate > 0 else input_fps
         output_fps = max(1.0, output_fps)
 
-        fd, output_path = tempfile.mkstemp(suffix=".mp4")
-        os.close(fd)
+        output_path = self._create_output_file()
 
         encoder_cmd = [
             "ffmpeg",
@@ -318,7 +331,7 @@ class CrowdFlowPipeline:
             "-preset", "fast",
             "-crf", "23",
             "-pix_fmt", "yuv420p",
-            output_path
+            str(output_path)
         ]
         
         encoder_stderr_file = tempfile.TemporaryFile()
@@ -423,8 +436,15 @@ class CrowdFlowPipeline:
             metadata["model_format"] = self._runtime.model_format
             metadata["model_version"] = self._runtime.model_version
 
+        # Register the output file in the cleanup manifest
+        output_path_str = str(output_path)
+        try:
+            register_output_file(output_path_str)
+        except Exception as exc:
+            logger.warning("Failed to register output file %s: %s", output_path_str, exc)
+
         result = PipelineResult(
-            output_video_path=output_path,
+            output_video_path=output_path_str,
             timeline=self._timeline.get_timeline(),
             metadata=metadata,
         )
