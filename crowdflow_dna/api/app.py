@@ -7,10 +7,12 @@ and establishes universal error handling returning standardized ErrorResponse mo
 
 from http import HTTPStatus
 import logging
+import os
 from typing import Any, List, Union
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -214,6 +216,30 @@ def create_app(
         redoc_url="/redoc",
         openapi_url="/openapi.json",
         **kwargs,
+    )
+
+    # Configure Cross-Origin Resource Sharing (CORS)
+    # Allows environment-based configuration via CROWDDNA_CORS_ORIGINS with sensible localhost defaults
+    cors_env = os.environ.get("CROWDDNA_CORS_ORIGINS")
+    if cors_env is not None and cors_env.strip():
+        raw_origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+        allow_origins = ["*"] if "*" in raw_origins else raw_origins
+    else:
+        allow_origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     # Lightweight application state initialization (no eager model loading)
