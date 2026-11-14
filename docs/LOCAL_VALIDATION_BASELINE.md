@@ -121,7 +121,7 @@ This confirms the orchestration, but does **not** imply that the production-trai
 ## 13. Known Limitations
 - The Gradio 4.21.0 validation was performed via direct programmatic API calls because the local programmatic client environment mismatched Pydantic validation rules.
 - Peak memory usage sits around 1.4 GB; this is perfectly acceptable for the localhost testing tier.
-- Cloud deployment (e.g., Render/Vercel) remains entirely unvalidated by this local run.
+- Cloud deployment (e.g., Render) remains entirely unvalidated by this local run.
 
 ## 14. Reproduction Instructions
 To reproduce this exact validated state on the original Windows machine:
