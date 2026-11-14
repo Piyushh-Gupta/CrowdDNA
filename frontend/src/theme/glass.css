@@ -1,1 +1,22 @@
-/* CSS File */
+/* CrowdDNA Glassmorphic Surfaces */
+.glass-panel {
+  background: var(--cdna-surface-primary);
+  border: 1px solid var(--cdna-border-main);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.glass-card {
+  background: var(--cdna-surface-secondary);
+  border: 1px solid var(--cdna-border-main);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-normal);
+}
+
+.glass-card:hover {
+  border-color: var(--cdna-border-main);
+  box-shadow: var(--shadow-md);
+}

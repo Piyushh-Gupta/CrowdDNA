@@ -1,1 +1,77 @@
-/* CSS File */
+/* CrowdDNA Design System Tokens */
+:root {
+  /* Color Palette - Light */
+  --cdna-primary: #6366f1;
+  --cdna-primary-hover: #4f46e5;
+  --cdna-primary-subtle: rgba(99, 102, 241, 0.1);
+
+  --cdna-surface-primary: #ffffff;
+  --cdna-surface-secondary: #f8fafc;
+  --cdna-surface-tertiary: #f1f5f9;
+  --cdna-surface-hover: #e2e8f0;
+
+  --cdna-text-main: #0f172a;
+  --cdna-text-muted: #64748b;
+  --cdna-text-subtle: #94a3b8;
+  --cdna-border-main: #e2e8f0;
+  --cdna-border-subtle: #f1f5f9;
+
+  /* Status Tokens */
+  --status-queued-text: #1d4ed8;
+  --status-queued-bg: #eff6ff;
+  --status-queued-border: #bfdbfe;
+
+  --status-running-text: #b45309;
+  --status-running-bg: #fffbeb;
+  --status-running-border: #fde68a;
+
+  --status-completed-text: #15803d;
+  --status-completed-bg: #f0fdf4;
+  --status-completed-border: #bbf7d0;
+
+  --status-failed-text: #b91c1c;
+  --status-failed-bg: #fef2f2;
+  --status-failed-border: #fecaca;
+
+  --status-cancelled-text: #475569;
+  --status-cancelled-bg: #f8fafc;
+  --status-cancelled-border: #cbd5e1;
+}
+
+[data-theme='dark'] {
+  --cdna-primary: #818cf8;
+  --cdna-primary-hover: #6366f1;
+  --cdna-primary-subtle: rgba(129, 140, 248, 0.15);
+
+  --cdna-surface-primary: #181924;
+  --cdna-surface-secondary: #12131a;
+  --cdna-surface-tertiary: #232534;
+  --cdna-surface-hover: #2b2e42;
+
+  --cdna-text-main: #f8fafc;
+  --cdna-text-muted: #94a3b8;
+  --cdna-text-subtle: #64748b;
+  --cdna-border-main: #2b2e42;
+  --cdna-border-subtle: #202230;
+
+  /* Status Tokens - Dark */
+  --status-queued-text: #93c5fd;
+  --status-queued-bg: rgba(30, 64, 175, 0.25);
+  --status-queued-border: rgba(59, 130, 246, 0.4);
+
+  --status-running-text: #fcd34d;
+  --status-running-bg: rgba(180, 83, 9, 0.25);
+  --status-running-border: rgba(245, 158, 11, 0.4);
+
+  --status-completed-text: #86efac;
+  --status-completed-bg: rgba(21, 128, 61, 0.25);
+  --status-completed-border: rgba(34, 197, 94, 0.4);
+
+  --status-failed-text: #fca5a5;
+  --status-failed-bg: rgba(185, 28, 28, 0.25);
+  --status-failed-border: rgba(239, 68, 68, 0.4);
+
+  --status-cancelled-text: #cbd5e1;
+  --status-cancelled-bg: rgba(71, 85, 105, 0.25);
+  --status-cancelled-border: rgba(148, 163, 184, 0.4);
+}

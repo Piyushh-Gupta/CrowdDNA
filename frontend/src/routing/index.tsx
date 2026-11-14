@@ -1,4 +1,3 @@
-
 import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { ProtectedRoute } from './ProtectedRoute';
@@ -36,7 +35,7 @@ export const AppRouter = () => (
               <Route path="/login" element={<Login />} />
               <Route path="/" element={<Lazy.Dashboard />} />
               <Route path="/workflows" element={<ProtectedRoute><Lazy.Workflows /></ProtectedRoute>} />
-              <Route path="/inference" element={<ProtectedRoute><Lazy.Inference /></ProtectedRoute>} />
+              <Route path="/inference" element={<Lazy.Inference />} />
               {featureFlags.enableExplainability && <Route path="/explainability" element={<ProtectedRoute><Lazy.Explainability /></ProtectedRoute>} />}
               <Route path="*" element={<NotFound />} />
             </Routes>

@@ -680,3 +680,115 @@ def test_saturated_queue_and_concurrent_cancellation():
     # Verify all 5 temporary files are cleanly deleted from disk
     for tf_path in temp_files:
         assert not tf_path.exists(), f"File {tf_path} was not cleaned up!"
+
+
+# ---------------------------------------------------------------------------
+# 5. Video Streaming & Upload Limit Tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_job_video_successful_streaming(
+    client: TestClient,
+    clean_job_manager: JobManager,
+    tmp_path: Path,
+):
+    """Test GET /jobs/{job_id}/video returns 200 with FileResponse for completed jobs."""
+    # Create fake completed video file
+    out_video = tmp_path / "rendered_output.mp4"
+    out_video.write_bytes(b"\x00\x00\x00\x1cftypisom" + b"A" * 100)
+
+    # Submit job and mark completed
+    resp = clean_job_manager.submit_job(
+        video_path="input.mp4",
+        task_fn=lambda **kw: InferenceResultDTO(output_video_path=str(out_video)),
+    )
+    time.sleep(0.1)
+
+    r = client.get(f"/jobs/{resp.job_id}/video")
+    assert r.status_code == 200
+    assert "video/mp4" in r.headers.get("content-type", "")
+    assert r.headers.get("accept-ranges") == "bytes"
+    assert len(r.content) == len(out_video.read_bytes())
+
+
+def test_get_job_video_not_found(client: TestClient):
+    """Test GET /jobs/{job_id}/video returns 404 for unknown job."""
+    r = client.get("/jobs/00000000-0000-0000-0000-000000000000/video")
+    assert r.status_code == 404
+    assert "not found" in r.json()["detail"].lower()
+
+
+def test_get_job_video_not_completed(
+    client: TestClient,
+    clean_job_manager: JobManager,
+):
+    """Test GET /jobs/{job_id}/video returns 400 when job is not yet completed."""
+    hold_event = threading.Event()
+
+    def blocked_task(job_id, video_path, enable_calibration, cancel_event):
+        hold_event.wait(timeout=2.0)
+        return InferenceResultDTO(output_video_path="out.mp4")
+
+    resp = clean_job_manager.submit_job(
+        video_path="video.mp4",
+        task_fn=blocked_task,
+    )
+
+    try:
+        r = client.get(f"/jobs/{resp.job_id}/video")
+        assert r.status_code == 400
+        assert "only available for completed jobs" in r.json()["detail"].lower()
+    finally:
+        hold_event.set()
+
+
+def test_get_job_video_missing_on_disk(
+    client: TestClient,
+    clean_job_manager: JobManager,
+):
+    """Test GET /jobs/{job_id}/video returns 404 when file was deleted from disk."""
+    resp = clean_job_manager.submit_job(
+        video_path="input.mp4",
+        task_fn=lambda **kw: InferenceResultDTO(output_video_path="/nonexistent/missing.mp4"),
+    )
+    time.sleep(0.1)
+
+    r = client.get(f"/jobs/{resp.job_id}/video")
+    assert r.status_code == 404
+    assert "not found on server storage" in r.json()["detail"].lower()
+
+
+def test_submit_inference_upload_size_limit_rejection(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that uploads exceeding MAX_UPLOAD_SIZE_BYTES are rejected immediately with 413."""
+    import crowdflow_dna.api.routes.inference as inf_route
+
+    # Set artificial small limit of 500 bytes
+    monkeypatch.setattr(inf_route, "MAX_UPLOAD_SIZE_BYTES", 500)
+
+    # 1. Above limit (800 bytes) -> 413
+    oversized_data = b"X" * 800
+    r_over = client.post(
+        "/inference",
+        files={"file": ("large.mp4", oversized_data, "video/mp4")},
+    )
+    assert r_over.status_code == 413
+    assert "exceeds" in r_over.json()["detail"].lower()
+
+    # 2. Exactly at limit (500 bytes) -> 202 Accepted
+    exact_data = b"Y" * 500
+    r_exact = client.post(
+        "/inference",
+        files={"file": ("exact.mp4", exact_data, "video/mp4")},
+    )
+    assert r_exact.status_code == 202
+
+    # 3. Below limit (200 bytes) -> 202 Accepted
+    below_data = b"Z" * 200
+    r_below = client.post(
+        "/inference",
+        files={"file": ("below.mp4", below_data, "video/mp4")},
+    )
+    assert r_below.status_code == 202
