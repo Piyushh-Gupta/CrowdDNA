@@ -8,6 +8,7 @@ extraction works end-to-end on this host.
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -35,7 +36,8 @@ def test_local_ingestion_end_to_end(tmp_path: Path):
     subprocess.run(cmd, check=True, capture_output=True)
 
     ingestor = VideoIngestor()
-    frames, metadata = ingestor.load(str(test_video))
+    frames, metadata = ingestor.load(str(test_video), deadline=time.monotonic() + 10)
+    frames = list(frames)  # materialize generator for len() and iteration
 
     assert metadata["width"] == 320
     assert metadata["height"] == 240
