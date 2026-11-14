@@ -27,6 +27,7 @@ from crowdflow_dna.errors import (
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = frozenset({".mp4", ".avi"})
+EXTENSIONS = SUPPORTED_EXTENSIONS
 
 
 def get_rss_mb() -> Optional[float]:
@@ -109,7 +110,8 @@ class VideoIngestor:
         if ext not in SUPPORTED_EXTENSIONS:
             raise InvalidVideoFormatError(
                 f"Unsupported file type '{ext}'. "
-                f"Please upload an MP4 or AVI video."
+                f"Please upload an MP4 or AVI video. "
+                f"Supported extensions: {', '.join(sorted(EXTENSIONS))}."
             )
 
     def _validate_file_size(self, path: Path, size_bytes: int) -> None:
