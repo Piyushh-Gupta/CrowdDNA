@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crowdflow-dna-sdk"
+version = "1.0.0"
+description = "Official Python SDK for CrowdDNA Real-Time Video Inference API"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.setuptools]
+packages = ["crowdflow_dna_sdk"]
+package-dir = { crowdflow_dna_sdk = "." }
