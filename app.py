@@ -10,6 +10,7 @@ When the variable is absent, the pipeline runs in dummy mode.
 
 import logging
 import os
+import socket
 from typing import Any, Dict, List, Optional, Tuple
 
 import gradio as gr
@@ -145,7 +146,11 @@ def process_video(
             f"✅ Analysis complete — inference mode · {backend} ({fmt}) · version: {version}."
         )
     else:
-        status_msg = "✅ Analysis complete (dummy mode — no risk model loaded)."
+        status_msg = (
+            "✅ Analysis complete (dummy mode — no risk model loaded)."
+        )
+        # Append a hint that the user can supply a model for risk classification
+        status_msg += " • Set ``CROWDDNA_MODEL_PATH`` to a ``.pt``/``.onnx`` deployment model for risk classification."
     
     logger.info("[Thread %s] process_video() return - success", thread_id)
     return output_path, timeline_data, metadata_data, status_msg
@@ -192,15 +197,68 @@ with gr.Blocks(title="CrowdFlow DNA — Crowd Risk Analyser") as demo:
         outputs=[output_video, timeline_table, metadata_table, status_box],
     )
 
+def select_port(configured_port: Any = None) -> int:
+    """Select a free port, prioritizing the configured port with fallback to 7860-7870.
+
+    Args:
+        configured_port: Desired port as integer, string, or None (reads PORT env var).
+
+    Returns:
+        The selected free port integer.
+
+    Raises:
+        SystemExit: If configured_port is invalid or no candidate port is free.
+    """
+    raw_port = os.getenv("PORT", "7860") if configured_port is None else configured_port
+    try:
+        port = int(raw_port)
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Port {port} is out of valid range (1-65535)")
+    except (ValueError, TypeError):
+        logger.error(
+            "Invalid PORT value %r: must be an integer between 1 and 65535.",
+            raw_port,
+        )
+        raise SystemExit(1)
+
+    # Automatic port fallback: try the requested port, then scan upward
+    # until a free port is found. An explicit PORT value is always honoured
+    # first; only if it is already bound do we fall back to the 7860-7870 range.
+    candidate_ports = [port] + [
+        p for p in range(7860, 7871) if p != port
+    ]
+
+    chosen_port = None
+    for candidate in candidate_ports:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("0.0.0.0", candidate))
+            chosen_port = candidate
+            break
+        except OSError:
+            logger.warning("Port %d is in use, trying next candidate.", candidate)
+
+    if chosen_port is None:
+        logger.error(
+            "Could not find a free port in range 7860-7870. "
+            "Set the PORT environment variable to a free port."
+        )
+        raise SystemExit(1)
+
+    return chosen_port
+
+
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 7860))
     logger.info("================ STARTUP SEQUENCE ================")
     logger.info(f"PID: {os.getpid()} | __name__ == '__main__'")
     logger.info("Before launch()")
-    
-    
+
+    chosen_port = select_port()
+    logger.info("Binding Gradio UI on port %d", chosen_port)
+
     try:
-        demo.launch(server_name="0.0.0.0", server_port=port)
+        demo.launch(server_name="0.0.0.0", server_port=chosen_port)
         logger.info("Immediately after launch()")
         logger.info("After launch returns")
     except Exception as e:
